@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from preprocessing.tokenize import build_uci_vocabulary, get_legal_move_mask
+from preprocessing.chess_tokenize import build_uci_vocabulary, get_legal_move_mask
 
 
 # ---------------------------
@@ -258,7 +258,12 @@ def train(data_dir="data"):
         s = torch.tensor(np.array([b[0] for b in batch])).to(device)
         t = torch.tensor(np.array([b[1] for b in batch])).to(device)
         pi = torch.tensor(np.array([b[2] for b in batch]), dtype=torch.float32).to(device)
-        v = torch.tensor(np.array([b[3] for b in batch]), dtype=torch.float32).unsqueeze(1).to(device)
+        v = (
+            torch
+            .tensor(np.array([b[3] for b in batch]), dtype=torch.float32)
+            .unsqueeze(1)
+            .to(device)
+        )
         masks = torch.tensor(np.array([b[4] for b in batch])).to(device)  # 버그 수정
 
         p_pred, v_pred = model(s, t, masks)

@@ -6,9 +6,12 @@ import chess.pgn
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
+INPUT_DIR = "/local_datasets/yho7374/lichess/pgn"
+OUTPUT_DIR = "/local_datasets/yho7374/lichess/csv"
 
-def preprocess_folder_to_uci(folder_path, output_dir, sample_prob=0.3):
-    search_pattern = os.path.join(folder_path, "*.pgn")
+
+def preprocess_folder_to_uci(input_dir, output_dir, sample_prob=0.3):
+    search_pattern = os.path.join(input_dir, "*.pgn")
     file_paths = glob.glob(search_pattern)
 
     all_games = []
@@ -54,8 +57,8 @@ def preprocess_folder_to_uci(folder_path, output_dir, sample_prob=0.3):
 
 
 if __name__ == "__main__":
-    folder = os.path.join(os.path.dirname(__file__), "sample")
-    output = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-    train, val, test = preprocess_folder_to_uci(folder, output)
+    input = INPUT_DIR
+    output = OUTPUT_DIR
+    train, val, test = preprocess_folder_to_uci(input, output)
     print(f"완료: train={len(train)}, val={len(val)}, test={len(test)}")
     print(f"저장 위치: {output}")

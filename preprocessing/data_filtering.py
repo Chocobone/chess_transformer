@@ -51,3 +51,11 @@ def preprocess_folder_to_uci(folder_path, output_dir, sample_prob=0.3):
     test.to_csv(os.path.join(output_dir, "test.csv"), index=False)
 
     return train, val, test
+
+
+if __name__ == "__main__":
+    folder = os.path.join(os.path.dirname(__file__), "sample")
+    output = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    train, val, test = preprocess_folder_to_uci(folder, output)
+    print(f"완료: train={len(train)}, val={len(val)}, test={len(test)}")
+    print(f"저장 위치: {output}")

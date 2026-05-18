@@ -10,11 +10,10 @@
 #SBATCH -o logs/slurm-%A.out
 
 
-/data/yho7374/anaconda3/bin/conda init
-source ~/.bashrc
+source /data/yho7374/anaconda3/etc/profile.d/conda.sh
 conda activate training
 
-cd /data/yho7374/repos/chess_rust/training
-python transformer.py
+cd /data/yho7374/repos/chess_rust
+python training/transformer.py
 
 exit 0

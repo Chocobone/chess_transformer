@@ -8,8 +8,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-from preprocessing.chess_tokenize import build_uci_vocabulary, get_legal_move_mask
+from chess_tokenize import build_uci_vocabulary, get_legal_move_mask
 
 
 # ---------------------------

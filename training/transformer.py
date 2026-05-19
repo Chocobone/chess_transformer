@@ -1,6 +1,6 @@
+import copy
 import os
 import random
-from collections import deque
 
 import chess
 import numpy as np
@@ -62,7 +62,135 @@ class ChessTransformer(nn.Module):
 
 
 # ---------------------------
-# MCTS (경량화)
+# PER (Prioritized Experience Replay)
+# ---------------------------
+class SumTree:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.tree = np.zeros(2 * capacity - 1, dtype=np.float64)
+        self.data = [None] * capacity
+        self.write = 0
+        self.n_entries = 0
+
+    def _propagate(self, idx, change):
+        while idx > 0:
+            parent = (idx - 1) // 2
+            self.tree[parent] += change
+            idx = parent
+
+    def _retrieve(self, idx, s):
+        while True:
+            left = 2 * idx + 1
+            right = left + 1
+            if left >= len(self.tree):
+                return idx
+            if s <= self.tree[left]:
+                idx = left
+            else:
+                s -= self.tree[left]
+                idx = right
+
+    def total(self):
+        return self.tree[0]
+
+    def add(self, p, data):
+        idx = self.write + self.capacity - 1
+        self.data[self.write] = data
+        self.update(idx, p)
+        self.write = (self.write + 1) % self.capacity
+        if self.n_entries < self.capacity:
+            self.n_entries += 1
+
+    def update(self, idx, p):
+        change = p - self.tree[idx]
+        self.tree[idx] = p
+        self._propagate(idx, change)
+
+    def get(self, s):
+        idx = self._retrieve(0, s)
+        data_idx = idx - self.capacity + 1
+        return idx, self.tree[idx], self.data[data_idx]
+
+
+class PrioritizedReplayBuffer:
+    """capacity를 줄이고 (20k) 우선순위 기반 샘플링으로 오래된 약한 데이터 비중을 낮춤."""
+
+    def __init__(self, capacity=20_000, alpha=0.6, beta_start=0.4, epsilon=0.01):
+        self.tree = SumTree(capacity)
+        self.alpha = alpha
+        self.beta = beta_start
+        self.epsilon = epsilon
+        self.max_priority = 1.0
+
+    def __len__(self):
+        return self.tree.n_entries
+
+    def add(self, sample):
+        self.tree.add(self.max_priority, sample)
+
+    def extend(self, samples):
+        for s in samples:
+            self.add(s)
+
+    def sample(self, n):
+        batch, idxs, priorities = [], [], []
+        segment = self.tree.total() / n
+
+        for i in range(n):
+            s = random.uniform(segment * i, segment * (i + 1))
+            idx, p, data = self.tree.get(s)
+            if data is None:
+                continue
+            priorities.append(p)
+            batch.append(data)
+            idxs.append(idx)
+
+        if not batch:
+            return [], [], np.ones(0, dtype=np.float32)
+
+        probs = np.array(priorities) / (self.tree.total() + 1e-8)
+        weights = (len(self) * probs + 1e-8) ** (-self.beta)
+        weights = (weights / weights.max()).astype(np.float32)
+
+        return batch, idxs, weights
+
+    def update_priorities(self, idxs, errors):
+        for idx, error in zip(idxs, errors):
+            p = (abs(float(error)) + self.epsilon) ** self.alpha
+            self.tree.update(idx, p)
+            self.max_priority = max(self.max_priority, p)
+
+    def anneal_beta(self, epoch, total_epochs):
+        self.beta = min(1.0, 0.4 + 0.6 * epoch / total_epochs)
+
+
+# ---------------------------
+# Opponent Pool
+# ---------------------------
+class OpponentPool:
+    """과거 체크포인트 pool — epoch마다 일정 확률로 현재 모델과 대전."""
+
+    def __init__(self, max_size=5):
+        self.pool = []
+        self.max_size = max_size
+
+    def add(self, state_dict):
+        self.pool.append(copy.deepcopy(state_dict))
+        if len(self.pool) > self.max_size:
+            self.pool.pop(0)
+
+    def sample_opponent(self, vocab_size, device):
+        if not self.pool:
+            return None
+        state = random.choice(self.pool)
+        m = ChessTransformer(vocab_size).to(device)
+        m.load_state_dict(state)
+        m.eval()
+        return m
+
+
+# ---------------------------
+# MCTS
 # ---------------------------
 class Node:
     def __init__(self, board, parent=None, prior=0):
@@ -144,13 +272,6 @@ def get_policy(root, vocab):
 # CSV 데이터 로드
 # ---------------------------
 def load_csv_games(csv_path, vocab):
-    """CSV의 인간 게임을 포지션 단위 학습 샘플로 변환.
-
-    튜플 형태: (board_state, turn, one_hot_policy, value, legal_mask)
-    - policy: 실제 플레이된 수의 one-hot 벡터
-    - value: 현재 플레이어 관점의 게임 결과 (+1/-1/0)
-    - vocab에 없는 수(프로모션 등)는 해당 포지션을 건너뜀
-    """
     df = pd.read_csv(csv_path)
     samples = []
 
@@ -191,23 +312,46 @@ def load_csv_games(csv_path, vocab):
 
 
 # ---------------------------
-# self-play
+# self-play (temperature annealing + opponent pool)
 # ---------------------------
-def self_play(model, vocab, device):
+def self_play(current_model, vocab, device, temperature=1.0, opponent_model=None):
+    """
+    temperature: 높을수록 탐색적, 낮을수록 greedy.
+    opponent_model: 있으면 랜덤 컬러를 맡아 대전. current_model 포지션만 buffer에 저장.
+    """
     board = chess.Board()
     data = []
 
+    if opponent_model is not None:
+        opponent_color = random.choice([chess.WHITE, chess.BLACK])
+    else:
+        opponent_color = None
+
     while not board.is_game_over():
-        root = run_mcts(board, model, vocab, device)
+        is_opponent = (opponent_color is not None) and (board.turn == opponent_color)
+        active_model = opponent_model if is_opponent else current_model
+
+        root = run_mcts(board, active_model, vocab, device)
         pi = get_policy(root, vocab)
-        mask = get_legal_move_mask(board, vocab)  # 버그 수정: 실제 포지션의 마스크 저장
+        mask = get_legal_move_mask(board, vocab)
 
         moves = list(root.children.keys())
-        probs = np.array([root.children[m].N for m in moves], dtype=np.float32)
-        probs /= probs.sum()
+        if not moves:
+            break
+
+        counts = np.array([root.children[m].N for m in moves], dtype=np.float32)
+
+        if temperature > 0:
+            probs = counts ** (1.0 / temperature)
+        else:
+            probs = (counts == counts.max()).astype(np.float32)
+        probs = probs / probs.sum()
+
         move = np.random.choice(moves, p=probs)
 
-        data.append((encode_board(board), int(board.turn), pi, mask))
+        if not is_opponent:
+            data.append((encode_board(board), int(board.turn), pi, mask))
+
         board.push_uci(move)
 
     result = board.result()
@@ -225,6 +369,12 @@ def self_play(model, vocab, device):
 # training
 # ---------------------------
 def train(data_dir="data"):
+    TOTAL_EPOCHS = 50
+    WARMUP_EPOCHS = 5
+    GAMES_PER_EPOCH = 5
+    BATCH_SIZE = 128
+    CHECKPOINT_INTERVAL = 10  # opponent pool 저장 주기 (epoch)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
 
@@ -232,9 +382,18 @@ def train(data_dir="data"):
     model = ChessTransformer(len(vocab)).to(device)
     opt = optim.AdamW(model.parameters(), lr=1e-4)
 
-    buffer = deque(maxlen=50_000)
+    # warm-up 5 epoch → cosine annealing (min lr = 1e-6)
+    def lr_lambda(epoch):
+        if epoch < WARMUP_EPOCHS:
+            return (epoch + 1) / WARMUP_EPOCHS
+        progress = (epoch - WARMUP_EPOCHS) / max(1, TOTAL_EPOCHS - WARMUP_EPOCHS)
+        return max(0.01, 0.5 * (1 + np.cos(np.pi * progress)))
 
-    # CSV 데이터 사전 로드 (self-play 전에 인간 게임으로 버퍼를 채움)
+    scheduler = optim.lr_scheduler.LambdaLR(opt, lr_lambda)
+
+    buffer = PrioritizedReplayBuffer(capacity=20_000, alpha=0.6, beta_start=0.4)
+    opponent_pool = OpponentPool(max_size=5)
+
     train_csv = os.path.join(data_dir, "train.csv")
     if os.path.exists(train_csv):
         print("CSV 데이터 로드 중...")
@@ -244,38 +403,67 @@ def train(data_dir="data"):
     else:
         print(f"CSV 없음 ({train_csv}), self-play만 사용")
 
-    for epoch in range(50):
-        for _ in range(5):
-            buffer.extend(self_play(model, vocab, device))
+    for epoch in range(TOTAL_EPOCHS):
+        # temperature annealing: 초반 탐색(1.5) → 후반 수렴(0.1)
+        temperature = max(0.1, 1.5 * (1 - epoch / TOTAL_EPOCHS))
 
-        if len(buffer) < 128:
+        # 50% 확률로 opponent pool과 대전
+        opponent = None
+        if len(opponent_pool.pool) > 0 and random.random() < 0.5:
+            opponent = opponent_pool.sample_opponent(len(vocab), device)
+
+        for _ in range(GAMES_PER_EPOCH):
+            buffer.extend(self_play(model, vocab, device, temperature=temperature, opponent_model=opponent))
+
+        if (epoch + 1) % CHECKPOINT_INTERVAL == 0:
+            opponent_pool.add(model.state_dict())
+            print(f"  → checkpoint 저장 (pool size: {len(opponent_pool.pool)})")
+
+        if len(buffer) < BATCH_SIZE:
             print(f"epoch {epoch:3d} | 샘플 부족 ({len(buffer)}개), skip")
+            scheduler.step()
             continue
 
-        batch = random.sample(buffer, 128)
+        buffer.anneal_beta(epoch, TOTAL_EPOCHS)
+        batch, idxs, weights = buffer.sample(BATCH_SIZE)
+
+        if not batch:
+            scheduler.step()
+            continue
+
+        weights_t = torch.tensor(weights).to(device)
 
         s = torch.tensor(np.array([b[0] for b in batch])).to(device)
         t = torch.tensor(np.array([b[1] for b in batch])).to(device)
         pi = torch.tensor(np.array([b[2] for b in batch]), dtype=torch.float32).to(device)
         v = (
-            torch
-            .tensor(np.array([b[3] for b in batch]), dtype=torch.float32)
+            torch.tensor(np.array([b[3] for b in batch]), dtype=torch.float32)
             .unsqueeze(1)
             .to(device)
         )
-        masks = torch.tensor(np.array([b[4] for b in batch])).to(device)  # 버그 수정
+        masks = torch.tensor(np.array([b[4] for b in batch])).to(device)
 
         p_pred, v_pred = model(s, t, masks)
 
-        loss_p = -(pi * torch.log_softmax(p_pred, dim=-1)).sum(dim=1).mean()
-        loss_v = ((v_pred - v) ** 2).mean()
-        loss = loss_p + loss_v
+        loss_p = -(pi * torch.log_softmax(p_pred, dim=-1)).sum(dim=1)
+        loss_v = (v_pred - v).squeeze(1) ** 2
+        loss = ((loss_p + loss_v) * weights_t).mean()
 
         opt.zero_grad()
         loss.backward()
         opt.step()
+        scheduler.step()
 
-        print(f"epoch {epoch:3d} | loss {loss.item():.4f} | buffer {len(buffer)}")
+        # TD error로 샘플 우선순위 업데이트
+        with torch.no_grad():
+            td_errors = (v_pred - v).squeeze(1).abs().cpu().numpy()
+        buffer.update_priorities(idxs, td_errors)
+
+        lr_now = opt.param_groups[0]["lr"]
+        print(
+            f"epoch {epoch:3d} | loss {loss.item():.4f} | "
+            f"buffer {len(buffer)} | lr {lr_now:.2e} | temp {temperature:.2f}"
+        )
 
 
 if __name__ == "__main__":

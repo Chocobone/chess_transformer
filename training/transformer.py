@@ -421,10 +421,6 @@ def train(data_dir="data"):
             torch.save({"epoch": epoch + 1, "model": model.state_dict(), "opt": opt.state_dict()}, ckpt_path)
             print(f"  → checkpoint 저장: {ckpt_path} (pool size: {len(opponent_pool.pool)})")
 
-    final_path = os.path.join(data_dir, "model_final.pt")
-    torch.save({"epoch": TOTAL_EPOCHS, "model": model.state_dict(), "opt": opt.state_dict()}, final_path)
-    print(f"학습 완료. 최종 모델 저장: {final_path}")
-
         if len(buffer) < BATCH_SIZE:
             print(f"epoch {epoch:3d} | 샘플 부족 ({len(buffer)}개), skip")
             scheduler.step()
@@ -460,7 +456,6 @@ def train(data_dir="data"):
         opt.step()
         scheduler.step()
 
-        # TD error로 샘플 우선순위 업데이트
         with torch.no_grad():
             td_errors = (v_pred - v).squeeze(1).abs().cpu().numpy()
         buffer.update_priorities(idxs, td_errors)
@@ -470,6 +465,10 @@ def train(data_dir="data"):
             f"epoch {epoch:3d} | loss {loss.item():.4f} | "
             f"buffer {len(buffer)} | lr {lr_now:.2e} | temp {temperature:.2f}"
         )
+
+    final_path = os.path.join(data_dir, "model_final.pt")
+    torch.save({"epoch": TOTAL_EPOCHS, "model": model.state_dict(), "opt": opt.state_dict()}, final_path)
+    print(f"학습 완료. 최종 모델 저장: {final_path}")
 
 
 if __name__ == "__main__":

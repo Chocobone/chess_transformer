@@ -417,7 +417,13 @@ def train(data_dir="data"):
 
         if (epoch + 1) % CHECKPOINT_INTERVAL == 0:
             opponent_pool.add(model.state_dict())
-            print(f"  → checkpoint 저장 (pool size: {len(opponent_pool.pool)})")
+            ckpt_path = os.path.join(data_dir, f"checkpoint_epoch{epoch + 1}.pt")
+            torch.save({"epoch": epoch + 1, "model": model.state_dict(), "opt": opt.state_dict()}, ckpt_path)
+            print(f"  → checkpoint 저장: {ckpt_path} (pool size: {len(opponent_pool.pool)})")
+
+    final_path = os.path.join(data_dir, "model_final.pt")
+    torch.save({"epoch": TOTAL_EPOCHS, "model": model.state_dict(), "opt": opt.state_dict()}, final_path)
+    print(f"학습 완료. 최종 모델 저장: {final_path}")
 
         if len(buffer) < BATCH_SIZE:
             print(f"epoch {epoch:3d} | 샘플 부족 ({len(buffer)}개), skip")

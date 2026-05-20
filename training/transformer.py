@@ -375,6 +375,8 @@ def train(data_dir="data"):
     BATCH_SIZE = 128
     CHECKPOINT_INTERVAL = 10  # opponent pool 저장 주기 (epoch)
 
+    os.makedirs(data_dir, exist_ok=True)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
 

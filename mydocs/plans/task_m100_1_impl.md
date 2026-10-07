@@ -246,7 +246,7 @@ def total_loss(...) = L_imit + alpha * L_style + lam * L_strength
 python scripts/cache_base_q.py --player tal --base base_model/270M.pt
 ```
 
-각 국면의 합법수 목록과 베이스 q(s,a)를 `data/processed/{player}/base_q_{size}.npz`에 저장한다. 기울기를 보관하지 않는 추론이라 메모리 부담이 작으므로 `--batch-moves`(기본 1024)로 한 번에 넣는 합법수 수만 조절한다. 베이스는 학습 중 변하지 않으므로 한 번만 계산하면 되고, 학습 시 베이스 순전파가 사라져 비용이 절반으로 준다. 기력 항과 모방 항 가중치가 이 캐시를 쓴다.
+각 국면의 합법수 목록과 베이스 q(s,a)를 `data/processed/{player}/base_q_{size}.npz`에 저장한다. 기울기를 보관하지 않는 추론이라 메모리 부담이 작으므로 `--batch-moves`(기본 256)로 한 번에 넣는 합법수 수만 조절한다. (4단계 구현 중 갱신: 1024는 12GB GPU에서 메모리가 넘쳐 급격히 느려져 256으로 낮췄다. 캐시와 평가는 float32가 기본이다.) 베이스는 학습 중 변하지 않으므로 한 번만 계산하면 되고, 학습 시 베이스 순전파가 사라져 비용이 절반으로 준다. 기력 항과 모방 항 가중치가 이 캐시를 쓴다.
 
 **`src/data/dataset.py`** — JSONL과 q 캐시를 읽는 `PositionDataset`, 가변 개수의 합법수를 한 배치로 묶는 `collate_fn`, 한 배치를 합법수 한도에 맞춰 나누는 `split_by_moves`.
 

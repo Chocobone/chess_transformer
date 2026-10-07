@@ -5,6 +5,7 @@ B를 0으로 초기화하므로 주입 직후의 출력은 베이스와 같다.
 """
 
 import math
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
@@ -82,3 +83,17 @@ def load_lora(model: nn.Module, state_dict: dict[str, torch.Tensor]) -> None:
     if missing or unexpected:
         raise ValueError(f"어댑터 키 불일치: 누락 {missing}, 잉여 {unexpected}")
     model.load_state_dict(state_dict, strict=False)
+
+
+def save_adapter(model: nn.Module, path: str | Path, settings: dict) -> None:
+    """어댑터 가중치와 주입 설정(rank, alpha, dropout, targets)을 한 파일에 저장한다."""
+    torch.save({"settings": settings, "state_dict": lora_state_dict(model)}, path)
+
+
+def load_adapter(model: ActionValueTransformer, path: str | Path) -> dict:
+    """베이스 모델에 저장된 설정대로 LoRA를 주입하고 어댑터를 싣는다. 주입 설정을 돌려준다."""
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    settings = checkpoint["settings"]
+    inject_lora(model, settings["rank"], settings["alpha"], settings["dropout"], tuple(settings["targets"]))
+    load_lora(model, checkpoint["state_dict"])
+    return settings

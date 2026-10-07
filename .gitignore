@@ -1,0 +1,15 @@
+# 파이썬
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 생성 데이터·학습 산출물 (git에 올리지 않는다)
+data/
+runs/
+checkpoints/
+
+# 베이스 모델 체크포인트 (download.sh로 받는다)
+base_model/*/
+base_model/*.zip
+base_model/*.pt
+base_model/*.npz

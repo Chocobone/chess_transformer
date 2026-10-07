@@ -4,8 +4,10 @@
 
 ```
 chess_transformer/
-├── requirements.txt            ← torch, python-chess, numpy, pytest
-├── .gitignore                  ← data/, checkpoints/, base_model/*/, __pycache__
+├── requirements.txt            ← torch, chess, numpy, pytest (Stage 0)
+├── pytest.ini                  ← 테스트 경로 설정 (Stage 0)
+├── docker/                     ← 로컬 개발 컨테이너 (Stage 0)
+├── .gitignore                  ← data/, runs/, checkpoints/, base_model/*/, __pycache__ (Stage 0)
 ├── src/
 │   ├── players.py              ← 기사별 설정 (PGN 경로, 이름 매칭 규칙)
 │   ├── data/
@@ -30,7 +32,32 @@ chess_transformer/
 
 생성 데이터(`data/`), 체크포인트, 어댑터 가중치는 git에 올리지 않는다.
 
-**로컬 환경**: 현재 로컬(Python 3.13)에 `torch`, `python-chess`가 없다. 단위 테스트를 위해 CPU용 `torch`와 `python-chess`, `pytest`를 로컬에 설치한다. 실제 가중치 검증과 학습은 GPU 서버에서 수행한다.
+**로컬 환경**: 로컬 개발 컨테이너(`docker/`, Python 3.13, CPU 전용)에서 구현과 단위 테스트를 수행한다. 실제 가중치 검증과 학습은 GPU 서버에서 수행한다.
+
+---
+
+## 0단계: 개발 환경 설정
+
+2026-10-07 작업지시자 지시로 추가한 단계다. 환경 설정을 끝낸 뒤 1단계를 시작한다.
+
+### 목표
+
+이후 단계가 코드 작성에만 집중할 수 있도록 로컬 실행 환경, 의존성 명세, 저장소 골격, 테스트 실행 체계를 먼저 갖춘다.
+
+### 구현
+
+- **로컬 컨테이너**: `docker/Dockerfile`, `docker/compose.yml` (CPU용 `torch`, `chess`, `numpy`, `pytest` 설치), `.gitattributes` (셸 스크립트 LF 고정)
+- **`requirements.txt`**: `torch`, `chess`, `numpy`, `pytest`. GPU 서버에서는 CUDA에 맞는 `torch`를 먼저 설치한 뒤 이 파일을 설치한다.
+- **`.gitignore`**: `data/`, `runs/`, `checkpoints/`, `base_model/` 하위 체크포인트, 파이썬 캐시
+- **패키지 골격**: `src/`, `src/data/`, `src/model/`, `src/train/`의 `__init__.py`. `scripts/`는 파일이 처음 생기는 2단계에서 만든다.
+- **`pytest.ini`**: 테스트 경로 `tests/`, 저장소 루트를 import 경로에 추가
+- **`tests/test_env.py`**: 환경 점검 테스트 (torch 순전파·역전파, python-chess 합법수 생성, 세 기사 PGN 읽기, `src` 패키지 import)
+
+### 검증
+
+- 컨테이너 안에서 `torch`, `chess`, `numpy`, `pytest` import 및 버전 확인
+- `pytest` 통과
+- `git status`에서 생성 데이터·캐시가 추적 대상으로 잡히지 않음
 
 ---
 
@@ -247,4 +274,4 @@ python -m src.train.train --player tal --base base_model/270M.pt \
 - 로컬 스모크 테스트 완주
 - 세 기사에 대해 `--player`만 바꿔 동일 명령으로 학습 가능
 
-## 예상 단계: 4단계
+## 예상 단계: 5단계 (0~4단계)

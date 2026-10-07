@@ -46,7 +46,7 @@
 
 | 문서 | 형식 | 예시 |
 |------|------|------|
-| 오늘 할일 | `yymmdd.md` | `260427.md` |
+| 오늘 할일 | `yyyymmdd.md` | `20260427.md` |
 | 수행 계획서 | `task_{milestone}_{번호}.md` | `task_m100_1.md` |
 | 구현 계획서 | `task_{milestone}_{번호}_impl.md` | `task_m100_1_impl.md` |
 | 테스트 결과 | `task_{milestone}_{번호}_test.md` | `task_m100_1_test.md` |

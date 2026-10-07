@@ -1,0 +1,22 @@
+# 사용법 (저장소 루트에서):
+#   docker compose -f docker/compose.yml up -d --build
+#   docker exec -it chess-dev bash
+name: chess-transformer
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chess-transformer-dev
+    container_name: chess-dev
+    init: true
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+      # 클로드 코드 로그인 정보와 git 전역 설정을 컨테이너 재생성 후에도 유지한다
+      - chess-dev-home:/home/dev
+    command: sleep infinity
+
+volumes:
+  chess-dev-home:

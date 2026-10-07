@@ -90,9 +90,9 @@ python -m src.data.preprocess --player tal [--include-fast] [--val-ratio 0.05] [
 처리 규칙:
 
 - **색 판별**: White/Black 태그 중 접두어가 맞는 쪽이 대상 기사. 양쪽 다 맞거나 둘 다 아니면 그 판은 건너뛴다.
-- **이벤트 필터 (기본 제외)**: 이벤트명이 속기·다면기·블라인드·시범 계열이면 제외한다. 대소문자 무시 정규식으로 `blitz`, `rapid`, `simul`, 단어 `sim`, `blind`, `exhib`, 단어 `TV`, `internet`을 매칭한다. `--include-fast`로 끌 수 있다. 제외 여부와 무관하게 `event_type` 필드를 남긴다.
+- **이벤트 필터 (기본 제외)**: 이벤트명을 대소문자 무시 정규식으로 분류해 `event_type`을 정하고, `classical`이 아니면 제외한다. 분류는 `simul`(`simul`, 단어 `sim`·`sim1`), `blindfold`(`blind`), `blitz`, `rapid`(`rapid`, 단어 `rap`, `g/25`, `30'` 같은 제한 시간 표기), `tiebreak`(`tiebreak`, 단어 `TB`), `exhibition`(`exh`로 시작하는 단어), `media`(단어 `TV`, `internet`), `advanced`(`advanced`, `man+comp`) 순으로 먼저 맞는 것을 쓴다. `--include-fast`로 끌 수 있다. 제외 여부와 무관하게 `event_type` 필드를 남긴다. (1단계에서 실제 이벤트명을 조사해 확정한 규칙이다.)
 - **국면 추출**: python-chess로 본선을 따라가며 대상 기사 차례마다 (둔 수 직전의 FEN, 둔 수 UCI)를 기록한다. 상대 차례 국면은 기록하지 않는다.
-- **오류 처리**: 비합법 수 등으로 파싱이 실패한 판은 통째로 건너뛰고 건수를 집계한다.
+- **오류 처리**: 비합법 수 등으로 파싱이 실패한 판, 수가 하나도 없는 판은 통째로 건너뛰고 건수를 집계한다. PGN은 `latin-1`로 읽는다 (카르포프 파일이 UTF-8이 아니다).
 - **분할**: 판 단위로 섞어 train/val 분할 (기본 95/5, 고정 seed). 같은 판의 국면이 양쪽에 걸치지 않는다.
 - **결과 `*` 판**: 수 자체는 실제로 둔 수이므로 포함한다.
 

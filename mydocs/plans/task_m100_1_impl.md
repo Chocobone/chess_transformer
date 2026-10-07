@@ -12,7 +12,7 @@ chess_transformer/
 │   ├── players.py              ← 기사별 설정 (PGN 경로, 이름 매칭 규칙)
 │   ├── data/
 │   │   ├── preprocess.py       ← PGN → 국면 데이터셋 (Stage 1)
-│   │   └── dataset.py          ← 학습용 Dataset / collate (Stage 4)
+│   │   └── dataset.py          ← 학습용 Dataset / collate / 합법수 한도 묶음 분할 (Stage 4)
 │   ├── model/
 │   │   ├── tokenizer.py        ← FEN 77토큰화 (Stage 2)
 │   │   ├── actions.py          ← 1,968 행동 공간 (Stage 2)
@@ -246,19 +246,34 @@ def total_loss(...) = L_imit + alpha * L_style + lam * L_strength
 python scripts/cache_base_q.py --player tal --base base_model/270M.pt
 ```
 
-각 국면의 합법수 목록과 베이스 q(s,a)를 `data/processed/{player}/base_q_{size}.npz`에 저장한다. 베이스는 학습 중 변하지 않으므로 한 번만 계산하면 되고, 학습 시 베이스 순전파가 사라져 비용이 절반으로 준다. 기력 항과 모방 항 가중치가 이 캐시를 쓴다.
+각 국면의 합법수 목록과 베이스 q(s,a)를 `data/processed/{player}/base_q_{size}.npz`에 저장한다. 기울기를 보관하지 않는 추론이라 메모리 부담이 작으므로 `--batch-moves`(기본 1024)로 한 번에 넣는 합법수 수만 조절한다. 베이스는 학습 중 변하지 않으므로 한 번만 계산하면 되고, 학습 시 베이스 순전파가 사라져 비용이 절반으로 준다. 기력 항과 모방 항 가중치가 이 캐시를 쓴다.
 
-**`src/data/dataset.py`** — JSONL과 q 캐시를 읽는 `PositionDataset`, 가변 개수의 합법수를 한 배치로 묶는 `collate_fn`.
+**`src/data/dataset.py`** — JSONL과 q 캐시를 읽는 `PositionDataset`, 가변 개수의 합법수를 한 배치로 묶는 `collate_fn`, 한 배치를 합법수 한도에 맞춰 나누는 `split_by_moves`.
+
+```python
+def split_by_moves(batch, max_moves) -> list[Batch]
+```
+
+- 국면 순서대로 채우다가 합법수 합계가 `max_moves`를 넘기 직전에 끊는다.
+- 한 국면의 합법수는 쪼개지 않는다 (정책이 그 국면의 모든 합법수에 대한 softmax이기 때문이다). 합법수가 한도보다 많은 국면은 혼자 한 묶음이 된다.
+- 묶음마다 `owner`를 0부터 다시 매긴다 (`pad_by_owner`의 전제).
 
 **`src/train/train.py`** — 학습 CLI:
 
 ```
 python -m src.train.train --player tal --base base_model/270M.pt \
-    --rank 16 --lora-alpha 32 --lr 1e-4 --epochs 3 --batch-positions 32 \
+    --rank 16 --lora-alpha 32 --lr 1e-4 --epochs 3 \
+    --batch-positions 32 --max-moves-per-forward 128 \
     --temperature 0.02 --lam 1.0 --tau 0.02 --alpha 0.0 --gamma 0.0 --out runs/tal
 ```
 
-- 배치 단위는 국면이다. 국면 32개는 합법수 약 1,000개의 순전파에 해당한다.
+- **기울기 누적** (2026-10-07 작업지시자 결정): 갱신 단위는 국면 `--batch-positions`개(기본 32)로 유지하되, 한 번에 순전파·역전파하는 양은 합법수 `--max-moves-per-forward`개(기본 128) 이하의 묶음으로 나눈다. 국면 32개(합법수 610~1,325개)를 한 번에 넣으면 136M·270M에서 GPU 메모리가 부족하기 때문이다 (3단계 보고서 측정).
+  - 묶음마다 국면별 손실의 합을 **배치 전체 국면 수**로 나눠 역전파한다. 손실이 국면 평균이므로 누적된 기울기는 한 번에 계산한 것과 같다.
+  - gradient clipping, optimizer 갱신, 학습률 스케줄, 로그의 스텝은 묶음이 아니라 갱신 단위로 센다. AMP도 묶음마다 역전파하고 갱신은 한 번만 한다.
+  - epoch 끝의 덜 찬 배치는 실제 국면 수로 나눈다.
+  - 3단계의 손실함수는 그대로 쓴다. 묶음별 평균에 `묶음 국면 수 / 배치 국면 수`를 곱한다.
+  - 한도 기본값 128의 근거: 세 기사 데이터 282,910국면의 합법수는 평균 약 32개, 최대 68개라 한 국면이 한도를 넘는 일은 없다. 로컬 12GB GPU 실측으로 합법수 96~133개 묶음이 136M 4.7 GiB, 270M 9.2 GiB였다. 270M을 12GB에서 돌릴 때는 여유가 적으므로 96으로 낮추고, 메모리가 큰 GPU 서버에서는 올려서 묶음 수를 줄인다.
+  - 한도를 바꿔도 갱신 결과는 같고 속도만 달라진다.
 - AdamW, 워밍업 후 코사인 감쇠, 혼합 정밀도(AMP), gradient clipping, 고정 seed.
 - 주기적으로 val에서 평가: 모방 손실, 기사 수 top-1/top-3 일치율, 평균 regret, 밴드(τ) 이탈률. 같은 지표를 베이스에 대해서도 학습 전에 한 번 측정해 기준선으로 로그에 남긴다.
 - 저장물: 어댑터 가중치(`adapter.pt`), 설정(`config.json`), 학습 로그(`log.jsonl`). 베이스 가중치는 저장하지 않는다.
@@ -269,8 +284,11 @@ python -m src.train.train --player tal --base base_model/270M.pt \
 ### 검증
 
 - 단위 테스트: collate가 가변 합법수를 올바르게 묶음, q 캐시의 수 순서가 `policy.py`의 순서와 일치
+- 단위 테스트 (묶음 분할): 묶음의 합법수 합계가 한도 이하, 국면이 쪼개지지 않고 순서·총 개수 보존, 한도보다 큰 국면은 단독 묶음
+- 단위 테스트 (기울기 누적): 소형 모델에서 한 배치를 한 번에 역전파한 기울기와 여러 묶음으로 누적한 기울기가 float32 오차 범위에서 일치, 한도를 바꿔도 한 스텝 뒤 어댑터 가중치가 일치
 - 로컬 스모크 테스트: 소형 무작위 모델과 수백 국면으로 전체 파이프라인(전처리 → 캐시 → 학습 2~3스텝 → 어댑터 저장·재로드)이 CPU에서 오류 없이 완주
-- GPU 서버에서 136M으로 짧은 학습을 돌려 손실 감소와 val 지표 출력을 확인 (작업지시자 실행, 결과는 `test_result/`에 저장)
+- 로컬 GPU(12GB)에서 136M으로 짧은 학습을 돌려 손실 감소, val 지표 출력, 최대 GPU 메모리와 갱신당 시간을 확인
+- GPU 서버에서 본 학습 실행 (작업지시자 실행, 결과는 `test_result/`에 저장)
 
 ---
 

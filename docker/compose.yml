@@ -1,6 +1,9 @@
 # 사용법 (저장소 루트에서):
 #   docker compose -f docker/compose.yml up -d --build
 #   docker exec -it chess-dev bash
+#
+# 호스트에 NVIDIA 드라이버와 Docker의 GPU 지원(NVIDIA Container Toolkit)이 있어야 한다.
+# 컨테이너 안에서 `nvidia-smi`로 확인한다.
 name: chess-transformer
 
 services:
@@ -17,6 +20,13 @@ services:
       # 클로드 코드 로그인 정보와 git 전역 설정을 컨테이너 재생성 후에도 유지한다
       - chess-dev-home:/home/dev
     command: sleep infinity
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
 volumes:
   chess-dev-home:

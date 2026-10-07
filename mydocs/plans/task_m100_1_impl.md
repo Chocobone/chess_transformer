@@ -24,7 +24,9 @@ chess_transformer/
 │       ├── losses.py           ← 모방·기력·스타일 항 (Stage 3)
 │       └── train.py            ← 학습 루프 (Stage 4)
 ├── scripts/
+│   ├── export_haiku_params.py  ← orbax 체크포인트 → npz, GPU 서버용 (Stage 2)
 │   ├── dump_jax_reference.py   ← 원본 JAX 기준 출력 추출, GPU 서버용 (Stage 2)
+│   ├── reference_fens.txt      ← 이식 검증용 국면 53개 (Stage 2)
 │   ├── verify_port.py          ← 이식 수치 비교 (Stage 2)
 │   └── cache_base_q.py         ← 동결 베이스 q 사전 계산 (Stage 4)
 └── tests/                      ← pytest 단위 테스트
@@ -32,7 +34,7 @@ chess_transformer/
 
 생성 데이터(`data/`), 체크포인트, 어댑터 가중치는 git에 올리지 않는다.
 
-**로컬 환경**: 로컬 개발 컨테이너(`docker/`, Python 3.13, CPU 전용)에서 구현과 단위 테스트를 수행한다. 실제 가중치 검증과 학습은 GPU 서버에서 수행한다.
+**로컬 환경**: 로컬 개발 컨테이너(`docker/`, Python 3.13)에서 구현과 단위 테스트를 수행한다. 실제 가중치 검증과 학습은 GPU 서버에서 수행한다.
 
 ---
 
@@ -142,17 +144,23 @@ class ActionValueTransformer(nn.Module):
 
 원본 구조를 그대로 따른다: 임베딩에 √d 스케일, 학습형 위치 인코딩, 인과 마스크 없음, 블록마다 pre-LN, 어텐션 q/k/v는 bias 없음, MLP는 SwiGLU, 최종 LN 후 선형 출력과 log-softmax. 입력 시퀀스의 shift 처리, 출력 투영의 bias 유무처럼 요약만으로 확정할 수 없는 세부는 구현 시 원본 소스를 줄 단위로 대조해 맞춘다.
 
-**`src/model/convert.py`** — 체크포인트 변환:
+**`scripts/export_haiku_params.py`** — GPU 서버의 JAX 환경에서 실행. 원본 체크포인트는 orbax(OCDBT) 형식이라 numpy만으로는 읽을 수 없으므로, orbax로 읽어 평평한 npz(키: `모듈경로/파라미터명`)로 내보낸다.
 
 ```
-python -m src.model.convert --checkpoint base_model/270M --size 270M --out base_model/270M.pt
+python scripts/export_haiku_params.py --checkpoint base_model/270M --out base_model/270M_params.npz
 ```
 
-Haiku 파라미터 트리를 numpy로만 읽어 `state_dict`로 옮긴다 (선형층 가중치는 전치). 매핑되지 않은 키나 남는 키가 하나라도 있으면 실패하게 한다. 체크포인트 파일의 실제 구조는 다운로드 후 확인해 매핑 표를 확정한다.
+**`src/model/convert.py`** — npz → PyTorch 체크포인트 (numpy와 torch만 사용):
 
-**`scripts/dump_jax_reference.py`** — GPU 서버에서 원본 searchless_chess 저장소 안에서 실행. 고정된 국면 목록(개시·중반·종반·프로모션·캐슬링·앙파상 포함 약 50개)의 모든 합법수에 대해 구간 로그확률을 `reference_{size}.npz`로 저장한다.
+```
+python -m src.model.convert --params base_model/270M_params.npz --size 270M --out base_model/270M.pt
+```
 
-**`scripts/verify_port.py`** — 같은 입력을 PyTorch 모델에 넣어 기준 출력과 비교한다. 최대 절대 오차, 승률 오차, 최선수 일치율을 출력한다.
+선형층 가중치는 전치한다. 매핑되지 않은 키, 남는 키, 형상이 다른 텐서가 하나라도 있으면 실패한다. (2단계에서 9M 체크포인트의 실제 구조를 확인해 확정했다.)
+
+**`scripts/dump_jax_reference.py`** — GPU 서버에서 원본 searchless_chess 저장소 안에서 실행. 고정된 국면 목록(`scripts/reference_fens.txt`, 개시·중반·종반·프로모션·캐슬링·앙파상 포함 53개)의 모든 합법수에 대해 원본 토크나이저로 만든 입력 토큰과 구간 로그확률을 `reference_{size}.npz`로 저장한다.
+
+**`scripts/verify_port.py`** — 같은 입력을 PyTorch 모델에 넣어 기준 출력과 비교한다. 입력 토큰·합법수 순서 일치 여부, 구간 로그확률·확률·승률의 최대 절대 오차, 최선수 일치율을 출력한다.
 
 개발 중에는 원본이 함께 공개한 소형 9M 체크포인트로 변환 코드를 먼저 맞춘 뒤 136M, 270M에 적용한다.
 
@@ -162,7 +170,7 @@ Haiku 파라미터 트리를 numpy로만 읽어 `state_dict`로 옮긴다 (선�
 - 변환 시 키 누락·잉여 0건, 파라미터 수가 136M/270M 규모와 일치
 - **완료 조건**: GPU 서버에서 `verify_port.py` 실행 결과 구간 로그확률 최대 절대 오차가 float32 수준(1e-4 이하 목표)이고 최선수가 전 국면에서 일치. 결과는 `mydocs/test_result/task_m100_1_test.md`에 기록
 
-이 단계의 완료 조건은 GPU 서버 실행이 필요하므로, 작업지시자가 `dump_jax_reference.py`와 `verify_port.py`를 서버에서 실행하고 출력을 `test_result/`에 저장해야 한다.
+(2026-10-07 갱신: 작업지시자 지시로 로컬 컨테이너에서 원본을 직접 실행해 9M·136M·270M 비교를 마쳤다.) 원래 계획은 다음과 같았다. 이 단계의 완료 조건은 GPU 서버 실행이 필요하므로, 작업지시자가 `export_haiku_params.py`, `dump_jax_reference.py`, `convert.py`, `verify_port.py`를 서버에서 실행하고 출력을 `test_result/`에 저장해야 한다.
 
 ---
 

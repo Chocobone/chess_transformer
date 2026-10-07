@@ -1,5 +1,5 @@
 # GPU 서버에서는 torch를 CUDA 버전에 맞는 휠로 먼저 설치한 뒤 이 파일을 설치한다.
-# 로컬 컨테이너(docker/Dockerfile)는 CPU 휠을 쓴다.
+# 로컬 컨테이너(docker/Dockerfile)는 PyPI 기본 휠(CUDA 포함)을 쓴다.
 torch>=2.4
 chess>=1.11
 numpy>=2.0

@@ -116,6 +116,8 @@ python -m src.train.train --player tal --base base_model/270M.pt --out runs/tal_
 | `--batch-positions` | 32 | 갱신 1회에 쓰는 국면 수 |
 | `--max-moves-per-forward` | 128 | 한 번에 순전파·역전파하는 합법수 수의 한도 |
 | `--eval-every` | 500 | 평가 주기 (갱신 횟수) |
+| `--checkpoint-every` | 200 | 재개용 체크포인트 저장 주기 (갱신 횟수). 평가 때는 항상 저장한다. 0이면 평가 때만 |
+| `--resume` | 꺼짐 | `--out`에 체크포인트가 있으면 이어서 돈다 (아래 "중단과 재개") |
 
 ### GPU 메모리와 `--max-moves-per-forward`
 
@@ -136,8 +138,9 @@ python -m src.train.train --player tal --base base_model/270M.pt --out runs/tal_
 | 파일 | 내용 |
 |------|------|
 | `adapter.pt` | 어댑터 가중치와 주입 설정. 평가할 때마다 갱신된다. 베이스 가중치는 들어 있지 않다 |
+| `checkpoint.pt` | 재개용 상태 (아래 "중단과 재개"). 학습된 어댑터를 쓸 때는 필요 없다 |
 | `config.json` | 실행 설정 전체 |
-| `log.jsonl` | 한 줄에 한 기록 (`baseline`, `train`, `eval`) |
+| `log.jsonl` | 한 줄에 한 기록 (`baseline`, `train`, `eval`, 재개했다면 `resume`) |
 
 학습된 어댑터를 쓰려면:
 
@@ -165,6 +168,35 @@ model.eval()
 | `strength` | 기력 항의 값 | 크게 오르지 않아야 한다 |
 
 `train` 기록의 `positions_per_sec`로 남은 시간을 가늠한다. 평가는 전체 val을 float32로 돌리므로 시간이 걸린다. 줄이려면 `--eval-positions 1000`(val 앞쪽만 평가)이나 `--eval-amp`를 쓴다.
+
+### 중단과 재개
+
+학습이 중간에 멈추면 같은 명령에 `--resume`을 붙여 다시 실행한다. 마지막 체크포인트에서 이어서 돈다.
+
+```bash
+python -u -m src.train.train --player tal --base base_model/136M.pt \
+    --out runs/tal_136M --eval-every 1000 --resume
+```
+
+- `--resume`은 처음부터 붙여 두어도 된다. 체크포인트가 없으면 처음부터 시작하고, 이미 끝난 학습이면 갱신 없이 끝난다.
+- 체크포인트(`checkpoint.pt`)에는 LoRA 가중치, 옵티마이저·스케줄러 상태, 갱신 횟수, 데이터 순서와 난수 상태가 들어 있다. 136M·rank 16에서 약 12.7MB이고, 임시 파일에 쓴 뒤 바꿔치기하므로 저장 도중에 멈춰도 이전 체크포인트가 남는다.
+- **재개한 학습의 결과는 끊기지 않은 학습과 같다.** 어댑터 가중치와 로그의 `train`·`eval` 수치가 같다 (시간 관련 값 제외). 테스트와 136M 60 갱신 실행에서 확인했다.
+- 중단되면 마지막 체크포인트 뒤의 갱신만 잃는다 (기본값으로 최대 200 갱신, 136M에서 약 4~5분).
+- 재개할 때 `log.jsonl`에서 체크포인트 뒤의 줄을 잘라 내고 `{"type": "resume", "step": N}` 줄을 남긴 뒤 이어 쓴다. 기준선은 다시 재지 않는다.
+- 학습 설정은 처음 실행과 같아야 한다. 다르면 `체크포인트의 설정이 지금 인자와 다르다`로 거부한다. `--num-workers`, `--log-every`, `--eval-every`, `--checkpoint-every`, `--device`는 바꿔도 된다.
+- `--resume` 없이 체크포인트가 있는 폴더에 쓰려고 하면 거부한다. 새로 시작하려면 폴더를 비우거나 다른 `--out`을 쓴다.
+
+오래 걸리는 학습은 터미널과 분리해 실행하고, 오류로 끝나면 같은 명령을 다시 실행하게 해 두면 사람이 지켜보지 않아도 된다. `--resume`이 붙어 있으므로 다시 실행하는 것만으로 이어진다.
+
+```bash
+setsid nohup bash -c 'for attempt in 1 2 3 4 5; do
+    python -u -m src.train.train --player tal --base base_model/136M.pt \
+        --out runs/tal_136M --eval-every 1000 --resume && break
+    sleep 20
+done' > runs/logs/train_tal_136M.log 2>&1 < /dev/null &
+```
+
+로컬 GPU(RTX 4070 Ti 12GB, WSL2)에서는 같은 명령의 학습이 `CUDA error: device-side assert triggered`, `CUDA error: unspecified launch failure`로 여러 번 멈췄다 (Task #2, 탈 학습). 멈춘 지점이 실행마다 달랐고 다시 돌리면 재현되지 않았으며 원인은 찾지 못했다. 재개하면 학습은 정상적으로 이어졌다.
 
 ### 짧게 먼저 돌려 보기
 
@@ -194,4 +226,7 @@ python -m src.train.train --player tal --base base_model/136M.pt --out runs/smok
 | `캐시의 국면 수가 … 다르다` | 전처리를 다시 한 뒤 캐시를 갱신하지 않았다. 캐시를 다시 만든다 |
 | `캐시의 합법수 순서가 국면과 맞지 않는다` | 캐시와 JSONL이 서로 다른 전처리 결과다. 캐시를 다시 만든다 |
 | `CUDA out of memory` | `--max-moves-per-forward`를 낮춘다 |
+| `checkpoint.pt가 이미 있다` | 그 폴더에 이전 학습의 체크포인트가 있다. 이어서 돌리려면 `--resume`을 붙이고, 새로 시작하려면 폴더를 비운다 |
+| `체크포인트의 설정이 지금 인자와 다르다` | 처음 실행과 다른 학습 설정으로 재개하려 했다. 메시지에 나온 항목을 처음 값으로 맞춘다 |
+| `CUDA error: device-side assert triggered`, `unspecified launch failure` (학습 도중) | 로컬 GPU에서 원인 불명으로 발생했다. `--resume`으로 다시 실행한다 |
 | 스텝이 갑자기 수십 배 느려짐 | GPU 메모리가 넘쳐 시스템 메모리를 빌려 쓰는 상태다 (WSL). 한도를 낮춘다 |

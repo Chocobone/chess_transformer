@@ -259,3 +259,103 @@ def test_training_smoke(workspace):
     for name, value in final.items():
         assert reloaded[name] == pytest.approx(value, rel=1e-4, abs=1e-6), name
     assert reloaded["imitation"] != pytest.approx(records[0]["imitation"], abs=1e-6)
+
+
+def resume_args(base, data_dir, out, *extra: str):
+    """epoch당 8 갱신(국면 120개, 16개씩), 2 epoch로 16 갱신. 평가는 4, 체크포인트는 3 갱신마다."""
+    return build_parser().parse_args([
+        "--player", "tal", "--base", str(base), "--out", str(out), "--data-dir", str(data_dir),
+        "--rank", "4", "--lora-alpha", "8", "--lr", "1e-2", "--epochs", "2", "--batch-positions", "16",
+        "--max-moves-per-forward", "64", "--log-every", "1", "--eval-every", "4", "--checkpoint-every", "3",
+        "--warmup-steps", "1", "--device", "cpu", "--num-workers", "0", *extra,
+    ])
+
+
+def run_records(out) -> list[dict]:
+    """log.jsonl에서 실행마다 달라지는 값(시간)과 재개 표시를 뺀 기록."""
+    records = [json.loads(line) for line in open(out / "log.jsonl", encoding="utf-8")]
+    return [
+        {key: value for key, value in record.items() if key not in ("positions_per_sec", "elapsed")}
+        for record in records if record["type"] != "resume"
+    ]
+
+
+def crash_at_update(monkeypatch, update: int) -> None:
+    """이 실행의 update번째 갱신에서 학습이 죽게 한다."""
+    calls = {"count": 0}
+
+    def crashing(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == update:
+            raise RuntimeError("중단")
+        return accumulate_gradients(*args, **kwargs)
+
+    monkeypatch.setattr("src.train.train.accumulate_gradients", crashing)
+
+
+@pytest.fixture(scope="module")
+def uninterrupted(workspace):
+    """끊기지 않고 끝까지 돈 학습."""
+    root, data_dir, base = workspace
+    out = root / "resume_reference"
+    train(resume_args(base, data_dir, out))
+    return out
+
+
+# 죽는 시점(전체 기준 갱신 번호)과 그때 남아 있는 마지막 체크포인트:
+# 6 → 4 (평가 직후), 8 → 6 (epoch 중간), 9 → 8 (epoch 경계), 12 → 9 (둘째 epoch 중간), 16 → 15 (마지막 갱신 직전)
+@pytest.mark.parametrize("crashes", [[6], [8], [9], [12], [16], [2], [6, 12], [5, 8, 9, 14]])
+def test_resume_matches_uninterrupted(workspace, uninterrupted, tmp_path, monkeypatch, crashes):
+    root, data_dir, base = workspace
+    out = tmp_path / "run"
+    done = 0
+    for crash in crashes:
+        crash_at_update(monkeypatch, crash - done)
+        with pytest.raises(RuntimeError, match="중단"):
+            train(resume_args(base, data_dir, out, "--resume"))
+        done = torch.load(out / "checkpoint.pt", weights_only=True)["step"] if (out / "checkpoint.pt").exists() else 0
+    monkeypatch.undo()
+    final = train(resume_args(base, data_dir, out, "--resume"))
+
+    expected = run_records(uninterrupted)
+    assert run_records(out) == expected
+    assert final == {key: value for key, value in expected[-1].items() if key not in ("type", "step")}
+    reference = torch.load(uninterrupted / "adapter.pt", weights_only=True)["state_dict"]
+    resumed = torch.load(out / "adapter.pt", weights_only=True)["state_dict"]
+    assert reference.keys() == resumed.keys()
+    assert all(torch.equal(reference[key], resumed[key]) for key in reference)
+    # config.json은 재개할 때 다시 쓰지 않는다
+    assert json.loads((out / "config.json").read_text(encoding="utf-8"))["total_steps"] == 16
+
+
+def test_resume_of_finished_run_does_nothing(workspace, uninterrupted, tmp_path):
+    root, data_dir, base = workspace
+    out = tmp_path / "run"
+    first = train(resume_args(base, data_dir, out, "--resume"))  # 체크포인트가 없으면 처음부터 돈다
+    assert run_records(out) == run_records(uninterrupted)
+    adapter = (out / "adapter.pt").read_bytes()
+
+    again = train(resume_args(base, data_dir, out, "--resume"))
+    assert again == first
+    assert (out / "adapter.pt").read_bytes() == adapter
+    assert run_records(out) == run_records(uninterrupted)
+
+
+def test_resume_rejects_other_settings_and_overwrite(workspace, tmp_path, monkeypatch):
+    root, data_dir, base = workspace
+    out = tmp_path / "run"
+    crash_at_update(monkeypatch, 5)
+    with pytest.raises(RuntimeError, match="중단"):
+        train(resume_args(base, data_dir, out))
+    monkeypatch.undo()
+    checkpoint = (out / "checkpoint.pt").read_bytes()
+
+    with pytest.raises(ValueError, match="lr"):
+        train(resume_args(base, data_dir, out, "--resume", "--lr", "1e-3"))
+    with pytest.raises(FileExistsError):
+        train(resume_args(base, data_dir, out))
+    assert (out / "checkpoint.pt").read_bytes() == checkpoint
+
+    # 결과에 영향이 없는 인자는 달라도 된다
+    train(resume_args(base, data_dir, out, "--resume", "--log-every", "2"))
+    assert torch.load(out / "checkpoint.pt", weights_only=True)["step"] == 16

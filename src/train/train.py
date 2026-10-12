@@ -1,15 +1,19 @@
 """기사별 LoRA 어댑터 학습.
 
-    python -m src.train.train --player tal --base base_model/270M.pt --out runs/tal
+    python -m src.train.train --player tal --base base_model/270M.pt --out runs/tal --resume
 
 갱신 단위는 국면 `--batch-positions`개다. GPU 메모리에 맞추기 위해 한 번에 순전파·역전파하는 양은
 합법수 `--max-moves-per-forward`개 이하의 묶음으로 나누고, 기울기를 누적한 뒤 한 번 갱신한다.
 세 기사에는 `--player`만 바꿔 같은 설정을 쓴다.
+
+평가 때마다와 `--checkpoint-every` 갱신마다 `{out}/checkpoint.pt`를 남긴다. `--resume`으로 다시 실행하면
+마지막 체크포인트에서 이어서 돌고, 결과는 끊기지 않은 학습과 같다.
 """
 
 import argparse
 import json
 import math
+import os
 import random
 import time
 from dataclasses import asdict, dataclass
@@ -17,10 +21,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import BatchSampler, DataLoader, RandomSampler, Sampler
 
 from src.data.dataset import Batch, PositionDataset, collate_fn, player_dir, split_by_moves
-from src.model.lora import ATTENTION_TARGETS, inject_lora, save_adapter
+from src.model.lora import ATTENTION_TARGETS, inject_lora, load_lora, lora_state_dict, save_adapter
 from src.model.transformer import ActionValueTransformer, load_base
 from src.players import PLAYERS
 from src.train.losses import total_loss
@@ -148,6 +152,76 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+class ResumableBatchSampler(Sampler):
+    """`DataLoader(shuffle=True, generator=...)`와 같은 순서로 배치를 낸다.
+
+    `skip`을 정해 두면 다음 한 번의 순회에서 앞의 그만큼을 건너뛴다 (재개한 epoch에서 이미 끝낸 배치).
+    건너뛰는 배치도 난수는 똑같이 소비하므로 그 뒤의 순서는 끊기지 않은 학습과 같다.
+    """
+
+    def __init__(self, dataset, batch_size: int, generator: torch.Generator):
+        self.batches = BatchSampler(RandomSampler(dataset, generator=generator), batch_size, drop_last=False)
+        self.skip = 0
+
+    def __len__(self) -> int:
+        return len(self.batches)
+
+    def __iter__(self):
+        skip, self.skip = self.skip, 0
+        for index, batch in enumerate(self.batches):
+            if index >= skip:
+                yield batch
+
+
+# 결과에 영향을 주지 않아 재개할 때 달라도 되는 인자
+RESUME_FREE_ARGS = ("resume", "num_workers", "log_every", "eval_every", "checkpoint_every", "device")
+
+
+def rng_state() -> dict:
+    """python·numpy·torch 전역 난수 상태. `weights_only=True`로 읽을 수 있는 형태로 바꿔 담는다."""
+    name, keys, pos, has_gauss, cached_gaussian = np.random.get_state()
+    state = {
+        "python": random.getstate(),
+        "numpy": (name, torch.from_numpy(keys.astype(np.int64)), pos, has_gauss, cached_gaussian),
+        "torch": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def set_rng_state(state: dict) -> None:
+    version, internal, gauss = state["python"]
+    random.setstate((version, tuple(internal), gauss))
+    name, keys, pos, has_gauss, cached_gaussian = state["numpy"]
+    np.random.set_state((name, keys.numpy().astype(np.uint32), pos, has_gauss, cached_gaussian))
+    torch.set_rng_state(state["torch"])
+    if "cuda" in state and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["cuda"])
+
+
+def save_checkpoint(path: Path, state: dict) -> None:
+    """임시 파일에 쓴 뒤 바꿔치기한다. 저장 도중 중단되어도 직전 체크포인트가 남는다."""
+    temporary = path.with_name(path.name + ".tmp")
+    torch.save(state, temporary)
+    os.replace(temporary, path)
+
+
+def truncate_log(path: Path, step: int) -> None:
+    """log.jsonl에서 체크포인트 뒤에 쓰인 줄(과 중단으로 잘린 줄)을 버린다."""
+    kept = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("step", 0) <= step:
+                kept.append(json.dumps(record, ensure_ascii=False) + "\n")
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.writelines(kept)
+
+
 def train(args: argparse.Namespace) -> dict[str, float]:
     seed_everything(args.seed)
     device = torch.device(args.device)
@@ -162,8 +236,9 @@ def train(args: argparse.Namespace) -> dict[str, float]:
     if args.eval_positions:
         val_set = torch.utils.data.Subset(val_set, range(min(args.eval_positions, len(val_set))))
     generator = torch.Generator().manual_seed(args.seed)
+    train_sampler = ResumableBatchSampler(train_set, args.batch_positions, generator)
     train_loader = DataLoader(
-        train_set, batch_size=args.batch_positions, shuffle=True, collate_fn=collate_fn,
+        train_set, batch_sampler=train_sampler, collate_fn=collate_fn,
         num_workers=args.num_workers, generator=generator, persistent_workers=args.num_workers > 0,
     )
     val_loader = DataLoader(
@@ -192,10 +267,29 @@ def train(args: argparse.Namespace) -> dict[str, float]:
         train_positions=len(train_set), val_positions=len(val_set),
         trainable_parameters=sum(parameter.numel() for parameter in parameters),
     )
-    with open(out / "config.json", "w", encoding="utf-8", newline="\n") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
 
-    log_file = open(out / "log.jsonl", "w", encoding="utf-8", newline="\n")
+    checkpoint_path = out / "checkpoint.pt"
+    resumed = None
+    if checkpoint_path.exists():
+        if not args.resume:
+            raise FileExistsError(f"{checkpoint_path}가 이미 있다. 이어서 돌리려면 --resume을 붙이고, 새로 시작하려면 폴더를 비운다")
+        resumed = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        different = sorted(
+            key for key in config.keys() | resumed["config"].keys()
+            if key not in RESUME_FREE_ARGS and config.get(key) != resumed["config"].get(key)
+        )
+        if different:
+            raise ValueError(f"체크포인트의 설정이 지금 인자와 다르다: {different}")
+        load_lora(model, resumed["lora"])
+        optimizer.load_state_dict(resumed["optimizer"])
+        scheduler.load_state_dict(resumed["scheduler"])
+        set_rng_state(resumed["rng"])
+        truncate_log(out / "log.jsonl", resumed["step"])
+    else:
+        with open(out / "config.json", "w", encoding="utf-8", newline="\n") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+
+    log_file = open(out / "log.jsonl", "a" if resumed else "w", encoding="utf-8", newline="\n")
 
     def log(record: dict) -> None:
         log_file.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -204,7 +298,10 @@ def train(args: argparse.Namespace) -> dict[str, float]:
 
     # 베이스 기준선: 학습 전에 같은 val 지표를 캐시의 베이스 q로 한 번 잰다
     eval_moves = args.eval_max_moves
-    log({"type": "baseline", **evaluate(None, val_loader, objective, eval_moves, device=device)})
+    if resumed:
+        log({"type": "resume", "step": resumed["step"]})
+    else:
+        log({"type": "baseline", **evaluate(None, val_loader, objective, eval_moves, device=device)})
 
     def run_eval(step: int) -> dict[str, float]:
         # 기본은 float32 평가다. bfloat16은 q를 조금 바꿔 베이스 기준선(float32 캐시)과의 비교를 흐린다
@@ -215,11 +312,31 @@ def train(args: argparse.Namespace) -> dict[str, float]:
 
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats()
-    step = 0
-    metrics = {}
-    start = time.time()
+    step = resumed["step"] if resumed else 0
+    first_epoch = resumed["epoch"] if resumed else 0
+    metrics = resumed["metrics"] if resumed else {}
+    start = time.time() - (resumed["elapsed"] if resumed else 0.0)
     window = {"positions": 0, "time": time.time()}
-    for epoch in range(args.epochs):
+    position = {}  # 지금 epoch, 그 epoch에서 끝낸 배치 수, 그 epoch를 시작할 때의 데이터 순서 난수 상태
+
+    def checkpoint() -> None:
+        save_checkpoint(checkpoint_path, {
+            "step": step, **position, "metrics": metrics, "elapsed": time.time() - start, "config": config,
+            "lora": lora_state_dict(model), "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(), "rng": rng_state(),
+        })
+
+    if step >= total_steps:
+        log_file.close()
+        return metrics
+
+    for epoch in range(first_epoch, args.epochs):
+        position = {"epoch": epoch, "batches_done": 0, "generator": generator.get_state()}
+        if resumed and epoch == first_epoch:
+            # 그 epoch를 시작하던 때의 난수로 같은 순서를 다시 만들고, 끝낸 배치는 건너뛴다
+            generator.set_state(resumed["generator"])
+            train_sampler.skip = resumed["batches_done"]
+            position.update(batches_done=resumed["batches_done"], generator=resumed["generator"])
         for batch in train_loader:
             optimizer.zero_grad(set_to_none=True)
             totals = accumulate_gradients(model, batch, objective, args.max_moves_per_forward, amp)
@@ -228,6 +345,7 @@ def train(args: argparse.Namespace) -> dict[str, float]:
             optimizer.step()
             scheduler.step()
             step += 1
+            position["batches_done"] += 1
             window["positions"] += batch.num_positions
 
             if step % args.log_every == 0 or step == total_steps:
@@ -241,13 +359,17 @@ def train(args: argparse.Namespace) -> dict[str, float]:
                 window = {"positions": 0, "time": now}
             if step % args.eval_every == 0 and step < total_steps:
                 metrics = run_eval(step)
+                checkpoint()
                 window["time"] = time.time()
+            elif args.checkpoint_every and step % args.checkpoint_every == 0 and step < total_steps:
+                checkpoint()
             if step >= total_steps:
                 break
         if step >= total_steps:
             break
 
     metrics = run_eval(step)
+    checkpoint()
     log_file.close()
     return metrics
 
@@ -285,6 +407,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log-every", type=int, default=20)
     parser.add_argument("--eval-every", type=int, default=500)
     parser.add_argument("--eval-positions", type=int, default=0, help="0이 아니면 val 앞쪽 국면만 평가한다")
+    parser.add_argument("--checkpoint-every", type=int, default=200,
+                        help="이 갱신 횟수마다 재개용 체크포인트를 남긴다 (평가 때는 항상 남긴다). 0이면 평가 때만")
+    parser.add_argument("--resume", action="store_true",
+                        help="--out에 checkpoint.pt가 있으면 이어서 돈다. 없으면 처음부터 시작한다")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--no-amp", action="store_true", help="혼합 정밀도(bfloat16)를 끈다")

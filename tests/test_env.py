@@ -10,9 +10,9 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 
 PGNS = [
-    "model_tal/Tal.pgn",
-    "model_karpov/Karpov.pgn",
-    "model_smyslov/Smyslov.pgn",
+    "player_pgn/Tal.pgn",
+    "player_pgn/Karpov.pgn",
+    "player_pgn/Smyslov.pgn",
 ]
 
 

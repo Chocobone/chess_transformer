@@ -15,7 +15,7 @@ class Player:
 # 접두어에 쉼표를 포함한다. "Karpov,"는 "Karpov, Anatoly" / "Karpov,Ana" / "Karpov,An"을
 # 모두 잡고 "Kasparov, Gary"는 잡지 않는다.
 PLAYERS = {
-    "tal": Player(pgn="model_tal/Tal.pgn", name_prefix="Tal,"),
-    "karpov": Player(pgn="model_karpov/Karpov.pgn", name_prefix="Karpov,"),
-    "smyslov": Player(pgn="model_smyslov/Smyslov.pgn", name_prefix="Smyslov,"),
+    "tal": Player(pgn="player_pgn/Tal.pgn", name_prefix="Tal,"),
+    "karpov": Player(pgn="player_pgn/Karpov.pgn", name_prefix="Karpov,"),
+    "smyslov": Player(pgn="player_pgn/Smyslov.pgn", name_prefix="Smyslov,"),
 }

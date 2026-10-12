@@ -74,32 +74,46 @@ python -u -m src.train.train --player {player} --base base_model/136M.pt \
 
 ---
 
-## 2단계: 탈 어댑터 학습
+## 2단계: 탈·카르포프 어댑터 학습
 
 **2026-10-12에 시작한다** (2026-10-11 작업지시자 지시). 시작 전에 `pytest`를 다시 돌리고, 세 기사 캐시 파일의 SHA-256이 1단계 보고서의 값과 같은지 확인한다.
 
+**2026-10-12 변경 (작업지시자 지시)**: 원래 2단계는 탈 학습만이었고 카르포프는 3단계였다. 탈 학습이 도는 중에 카르포프 학습을 2단계에 포함하기로 했다. 탈이 끝나면 승인 대기 없이 같은 설정으로 카르포프를 이어서 학습하고, 두 기사의 검증과 비교를 함께 보고한다.
+
 ### 목표
 
-탈의 어댑터를 3 epoch 끝까지 학습하고, 결과를 보고해 같은 설정으로 나머지 두 기사를 학습할지 결정할 근거를 만든다.
+탈과 카르포프의 어댑터를 3 epoch 끝까지 학습하고, 두 결과를 비교해 보고한다. 같은 설정으로 스미슬로프를 학습할지 결정할 근거를 만든다.
 
 ### 구현
 
 ```bash
 python -u -m src.train.train --player tal --base base_model/136M.pt \
     --out runs/tal_136M --eval-every 1000
+python -u -m src.train.train --player karpov --base base_model/136M.pt \
+    --out runs/karpov_136M --eval-every 1000
 ```
 
-- 7,455 갱신, 평가는 1000 갱신마다와 종료 시 (총 8회). 로그는 `runs/logs/train_tal_136M.log`.
+- 탈 7,455 갱신(평가 8회), 카르포프 9,039 갱신(평가 10회). 평가는 1000 갱신마다와 종료 시. 로그는 `runs/logs/train_{player}_136M.log`.
+- 두 학습을 차례로 이어서 실행한다. 탈 학습이 정상 종료하지 않으면 카르포프 학습은 시작하지 않는다.
 - 학습 중 `max_memory_gib`와 `positions_per_sec`를 확인한다. 처리량이 급격히 떨어지면(메모리 초과) 멈추고 보고한다.
-- 학습이 끝나면 `mydocs/test_result/task_m100_2_test.md`를 만들어 실행 명령, GPU, `config.json`, `baseline` 줄, 모든 `eval` 줄, 마지막 `train` 줄 몇 개, `adapter.pt`의 크기와 SHA-256을 적는다.
+- 학습이 끝나면 `mydocs/test_result/task_m100_2_test.md`를 만들어 기사마다 실행 명령, GPU, `config.json`, `baseline` 줄, 모든 `eval` 줄, 마지막 `train` 줄 몇 개, `adapter.pt`의 크기와 SHA-256을 적는다.
 
 ### 검증
+
+두 기사에 똑같이 적용한다.
 
 - 학습이 마지막 갱신까지 오류 없이 끝나고 `adapter.pt`, `config.json`, `log.jsonl`이 생긴다.
 - `log.jsonl`의 마지막 `eval`의 step이 `config.json`의 `total_steps`와 같다.
 - 손실·기울기 노름에 NaN·무한대가 없다.
 - 저장된 `adapter.pt`를 새로 올린 베이스에 `load_adapter`로 붙여 val 전체를 다시 평가한 지표가 `log.jsonl`의 마지막 `eval` 값과 일치한다 (저장물이 실제로 쓸 수 있는지 확인).
 - 베이스 기준선 대비 val 지표 변화를 표로 보고한다: `imitation`, `top1`, `top3`, `regret`, `regret_top1`, `band_violation`, `strength`. 개선되지 않은 지표도 그대로 적는다.
+- 두 기사의 `config.json`이 `player`, `out`, 데이터 크기에 따른 값(`total_steps`, `train_positions`, `val_positions`)을 빼고 동일하다.
+
+### 두 기사 비교
+
+- 기사별 기준선과 최종 val 지표, 기준선 대비 변화를 나란히 놓은 표
+- 평가 시점별 추이를 나란히 놓은 표
+- 두 기사의 val은 서로 다른 국면이므로 절대값이 아니라 각자의 기준선 대비 변화를 비교한다
 
 ### 보고와 결정
 
@@ -109,8 +123,9 @@ python -u -m src.train.train --player tal --base base_model/136M.pt \
 - 후반 평가에서 `imitation`이 다시 오르는가 (과적합)
 - `regret`, `band_violation`이 기준선보다 얼마나 올랐는가
 - train 손실과 val 손실의 차이
+- 위 경향이 두 기사에서 같은가
 
-설정을 바꾸기로 하면 구현 계획서를 수정해 승인받고, 탈을 새 설정으로 다시 학습한다.
+설정을 바꾸기로 하면 구현 계획서를 수정해 승인받고, 새 설정으로 다시 학습한다.
 
 ### 보고서
 
@@ -118,28 +133,25 @@ python -u -m src.train.train --player tal --base base_model/136M.pt \
 
 ---
 
-## 3단계: 카르포프·스미슬로프 어댑터 학습
+## 3단계: 스미슬로프 어댑터 학습
 
 ### 목표
 
-2단계에서 확정한 설정으로 나머지 두 기사의 어댑터를 학습한다.
+2단계에서 확정한 설정으로 스미슬로프의 어댑터를 학습한다.
 
 ### 구현
 
 ```bash
-python -u -m src.train.train --player karpov --base base_model/136M.pt \
-    --out runs/karpov_136M --eval-every 1000
 python -u -m src.train.train --player smyslov --base base_model/136M.pt \
     --out runs/smyslov_136M --eval-every 1000
 ```
 
-- 카르포프 9,039 갱신(평가 10회), 스미슬로프 8,736 갱신(평가 9회). 두 학습을 차례로 이어서 실행하고, 앞의 학습이 실패하면 뒤의 학습은 시작하지 않는다.
-- 로그는 `runs/logs/train_{player}_136M.log`.
+- 8,736 갱신(평가 9회). 로그는 `runs/logs/train_smyslov_136M.log`.
 - 결과를 `mydocs/test_result/task_m100_2_test.md`에 2단계와 같은 형식으로 추가한다.
 
 ### 검증
 
-2단계의 검증 항목을 두 기사에 똑같이 적용한다. 추가로:
+2단계의 검증 항목을 똑같이 적용한다. 추가로:
 
 - 세 기사의 `config.json`이 `player`, `out`, 데이터 크기에 따른 값(`total_steps`, `train_positions`, `val_positions`)을 빼고 동일하다.
 
@@ -198,8 +210,8 @@ python -u -m src.train.train --player smyslov --base base_model/136M.pt \
 | 단계 | 내용 | 시간 | 일정 |
 |------|------|------|------|
 | 1단계 | q 캐시 + 검증 + 확인 학습 | 캐시 2시간 49분 (실측) | 2026-10-11 완료 |
-| 2단계 | 탈 학습 약 2.8시간 + 평가 8회 약 19분 | 약 3.1시간 | 2026-10-12 시작 |
-| 3단계 | 카르포프 약 3.9시간, 스미슬로프 약 3.7시간 (평가 19회 포함) | 약 7.6시간 | 2단계 승인 후 |
+| 2단계 | 탈 약 3.1시간, 카르포프 약 3.9시간 (평가 18회 포함) | 약 7.0시간 | 2026-10-12 시작 |
+| 3단계 | 스미슬로프 약 3.7시간 (평가 9회 포함) | 약 3.7시간 | 2단계 승인 후 |
 | 4단계 | 종합·문서 | 실행 대기 없음 | 3단계 승인 후 |
 
 ## 예상 단계: 4단계

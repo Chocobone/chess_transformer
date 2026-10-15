@@ -153,7 +153,7 @@ def seed_everything(seed: int) -> None:
 
 
 class ResumableBatchSampler(Sampler):
-    """`DataLoader(shuffle=True, generator=...)`와 같은 순서로 배치를 낸다.
+    """`generator`로 epoch마다 섞은 순서로 배치를 낸다. 이 생성기는 순서에만 쓴다.
 
     `skip`을 정해 두면 다음 한 번의 순회에서 앞의 그만큼을 건너뛴다 (재개한 epoch에서 이미 끝낸 배치).
     건너뛰는 배치도 난수는 똑같이 소비하므로 그 뒤의 순서는 끊기지 않은 학습과 같다.
@@ -172,6 +172,11 @@ class ResumableBatchSampler(Sampler):
             if index >= skip:
                 yield batch
 
+
+# 체크포인트의 데이터 순서 방식. 2: 순서용 생성기를 샘플러만 쓴다 (Task #5).
+# 표시가 없는 체크포인트는 DataLoader가 같은 생성기에서 worker 시드를 뽑던 방식이라,
+# num_workers > 0에서 epoch 1 이후에 재개하면 순서가 끊기지 않은 학습과 달랐다.
+DATA_ORDER = 2
 
 # 결과에 영향을 주지 않아 재개할 때 달라도 되는 인자
 RESUME_FREE_ARGS = ("resume", "num_workers", "log_every", "eval_every", "checkpoint_every", "device")
@@ -237,9 +242,12 @@ def train(args: argparse.Namespace) -> dict[str, float]:
         val_set = torch.utils.data.Subset(val_set, range(min(args.eval_positions, len(val_set))))
     generator = torch.Generator().manual_seed(args.seed)
     train_sampler = ResumableBatchSampler(train_set, args.batch_positions, generator)
+    # DataLoader는 반복자를 만들 때마다 자기 생성기에서 worker 시드를 뽑는다. 반복자를 만드는 횟수는
+    # num_workers와 재개 여부에 따라 다르므로, 순서용 생성기와 나눈다. 데이터 처리에 난수가 없어 결과에 영향이 없다.
+    worker_seeds = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
         train_set, batch_sampler=train_sampler, collate_fn=collate_fn,
-        num_workers=args.num_workers, generator=generator, persistent_workers=args.num_workers > 0,
+        num_workers=args.num_workers, generator=worker_seeds, persistent_workers=args.num_workers > 0,
     )
     val_loader = DataLoader(
         val_set, batch_size=args.batch_positions, shuffle=False, collate_fn=collate_fn,
@@ -274,6 +282,11 @@ def train(args: argparse.Namespace) -> dict[str, float]:
         if not args.resume:
             raise FileExistsError(f"{checkpoint_path}가 이미 있다. 이어서 돌리려면 --resume을 붙이고, 새로 시작하려면 폴더를 비운다")
         resumed = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        if resumed.get("data_order") != DATA_ORDER and resumed["step"] < total_steps:
+            raise ValueError(
+                f"{checkpoint_path}는 수정 전 데이터 순서 방식의 체크포인트다. 이어서 돌리면 끊기지 않은 학습과 "
+                "순서가 달라지므로 거부한다. 새로 시작하려면 폴더를 비운다"
+            )
         different = sorted(
             key for key in config.keys() | resumed["config"].keys()
             if key not in RESUME_FREE_ARGS and config.get(key) != resumed["config"].get(key)
@@ -321,7 +334,8 @@ def train(args: argparse.Namespace) -> dict[str, float]:
 
     def checkpoint() -> None:
         save_checkpoint(checkpoint_path, {
-            "step": step, **position, "metrics": metrics, "elapsed": time.time() - start, "config": config,
+            "step": step, "data_order": DATA_ORDER, **position, "metrics": metrics,
+            "elapsed": time.time() - start, "config": config,
             "lora": lora_state_dict(model), "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict(), "rng": rng_state(),
         })

@@ -2,7 +2,7 @@
 
 - 발견: 2026-10-15 (Task #5)
 - 관련: Task #2(탈), #3(카르포프), #4(스미슬로프) 본 학습, `src/train/train.py`의 `--resume`
-- 상태: 원인 확인, 영향 추정 완료. 수정은 Task #5 2단계 (작성 중)
+- 상태: 수정 완료 (Task #5 2단계). 기존 기록 정정은 3단계
 
 ## 증상
 
@@ -54,6 +54,18 @@ epoch 1에서 한 번만 재개해도 `num_workers=2`에서는 0 / 50 / 125였�
 - 시뮬레이션은 순서 관련 루프를 옮긴 것이다. 실제 학습의 배치 내용은 로그에 남아 있지 않아 직접 대조하지 못했다. 겹치는 step의 loss가 다르다는 점만 시뮬레이션과 맞는다.
 - 재개를 일으킨 CUDA 오류(device-side assert)의 원인은 밝히지 않았다 (보류).
 
-## 수정
+## 수정 (Task #5 2단계)
 
-(Task #5 2단계에서 작성)
+`src/train/train.py`
+
+- worker 시드용 생성기 `worker_seeds`를 따로 만들어 `DataLoader(generator=worker_seeds)`에 넘긴다. 순서용 `generator`는 `ResumableBatchSampler`(안의 `RandomSampler`)만 쓴다. 이제 순열은 반복자를 몇 번 만드는지와 관계없다. 데이터 처리(`PositionDataset`, `collate_fn`)에는 난수가 없으므로 worker 시드는 결과에 영향이 없고, 그래서 `worker_seeds`의 상태는 체크포인트에 넣지 않는다.
+- 체크포인트에 `"data_order": 2`를 넣는다. 이 표시가 없는(수정 전) 체크포인트로 끝나지 않은 학습을 재개하려 하면 `ValueError`("수정 전 데이터 순서 방식의 체크포인트다")로 거부한다. 이미 끝난 학습은 표시가 없어도 지금처럼 갱신 없이 끝난다.
+- `--num-workers`는 계속 재개 때 바꿔도 되는 인자다. 이제 실제로 결과에 영향이 없다.
+
+`tests/test_train.py` (5건 추가, 수정 전 코드에서 5건 모두 실패, 수정 뒤 전체 116건 통과)
+
+- `test_num_workers_does_not_change_result`: `--num-workers 2`로 끊기지 않고 돈 학습이 `0`과 로그·어댑터 모두 같다
+- `test_resume_with_workers_matches_uninterrupted` (`[9]`, `[12]`, `[6, 12]`): `--num-workers 2`로 epoch 경계 직후·둘째 epoch 중간에서 죽였다가 재개해도 끊기지 않은 학습과 같다
+- `test_resume_rejects_checkpoint_of_old_data_order`: 표시 없는 체크포인트의 재개 거부, 끝난 학습은 그대로 끝남
+
+수정의 부작용: epoch 0부터 순서가 수정 전과 다르다. 수정 전 어댑터(탈·카르포프·스미슬로프 136M)의 배치 순서는 이제 재현할 수 없다. 수정 전 체크포인트로 학습을 이을 수도 없다. 세 학습은 모두 끝났으므로 실제로 막히는 학습은 없다.

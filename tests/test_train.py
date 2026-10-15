@@ -304,28 +304,80 @@ def uninterrupted(workspace):
 
 # 죽는 시점(전체 기준 갱신 번호)과 그때 남아 있는 마지막 체크포인트:
 # 6 → 4 (평가 직후), 8 → 6 (epoch 중간), 9 → 8 (epoch 경계), 12 → 9 (둘째 epoch 중간), 16 → 15 (마지막 갱신 직전)
-@pytest.mark.parametrize("crashes", [[6], [8], [9], [12], [16], [2], [6, 12], [5, 8, 9, 14]])
-def test_resume_matches_uninterrupted(workspace, uninterrupted, tmp_path, monkeypatch, crashes):
-    root, data_dir, base = workspace
-    out = tmp_path / "run"
+def resume_after_crashes(base, data_dir, out, monkeypatch, crashes, *extra: str) -> dict:
+    """crashes의 갱신 번호(전체 기준)마다 죽였다가 --resume으로 끝까지 돈다."""
     done = 0
     for crash in crashes:
         crash_at_update(monkeypatch, crash - done)
         with pytest.raises(RuntimeError, match="중단"):
-            train(resume_args(base, data_dir, out, "--resume"))
+            train(resume_args(base, data_dir, out, "--resume", *extra))
         done = torch.load(out / "checkpoint.pt", weights_only=True)["step"] if (out / "checkpoint.pt").exists() else 0
     monkeypatch.undo()
-    final = train(resume_args(base, data_dir, out, "--resume"))
+    return train(resume_args(base, data_dir, out, "--resume", *extra))
+
+
+def assert_same_adapter(reference_out, out) -> None:
+    reference = torch.load(reference_out / "adapter.pt", weights_only=True)["state_dict"]
+    other = torch.load(out / "adapter.pt", weights_only=True)["state_dict"]
+    assert reference.keys() == other.keys()
+    assert all(torch.equal(reference[key], other[key]) for key in reference)
+
+
+@pytest.mark.parametrize("crashes", [[6], [8], [9], [12], [16], [2], [6, 12], [5, 8, 9, 14]])
+def test_resume_matches_uninterrupted(workspace, uninterrupted, tmp_path, monkeypatch, crashes):
+    root, data_dir, base = workspace
+    out = tmp_path / "run"
+    final = resume_after_crashes(base, data_dir, out, monkeypatch, crashes)
 
     expected = run_records(uninterrupted)
     assert run_records(out) == expected
     assert final == {key: value for key, value in expected[-1].items() if key not in ("type", "step")}
-    reference = torch.load(uninterrupted / "adapter.pt", weights_only=True)["state_dict"]
-    resumed = torch.load(out / "adapter.pt", weights_only=True)["state_dict"]
-    assert reference.keys() == resumed.keys()
-    assert all(torch.equal(reference[key], resumed[key]) for key in reference)
+    assert_same_adapter(uninterrupted, out)
     # config.json은 재개할 때 다시 쓰지 않는다
     assert json.loads((out / "config.json").read_text(encoding="utf-8"))["total_steps"] == 16
+
+
+def test_num_workers_does_not_change_result(workspace, uninterrupted, tmp_path):
+    """worker를 쓰면 반복자를 epoch마다 새로 만들지 않는다. 그래도 순서와 결과는 같아야 한다."""
+    root, data_dir, base = workspace
+    out = tmp_path / "run"
+    train(resume_args(base, data_dir, out, "--num-workers", "2"))
+    assert run_records(out) == run_records(uninterrupted)
+    assert_same_adapter(uninterrupted, out)
+
+
+# worker를 쓸 때 epoch 경계 뒤에서 재개: 9 → 8 (epoch 경계), 12 → 9 (둘째 epoch 중간)
+@pytest.mark.parametrize("crashes", [[9], [12], [6, 12]])
+def test_resume_with_workers_matches_uninterrupted(workspace, uninterrupted, tmp_path, monkeypatch, crashes):
+    root, data_dir, base = workspace
+    out = tmp_path / "run"
+    resume_after_crashes(base, data_dir, out, monkeypatch, crashes, "--num-workers", "2")
+    assert run_records(out) == run_records(uninterrupted)
+    assert_same_adapter(uninterrupted, out)
+
+
+def test_resume_rejects_checkpoint_of_old_data_order(workspace, uninterrupted, tmp_path, monkeypatch):
+    """데이터 순서 방식 표시가 없는 (수정 전) 체크포인트로는 끝나지 않은 학습을 잇지 않는다."""
+    root, data_dir, base = workspace
+    out = tmp_path / "run"
+    crash_at_update(monkeypatch, 5)
+    with pytest.raises(RuntimeError, match="중단"):
+        train(resume_args(base, data_dir, out, "--resume"))
+    monkeypatch.undo()
+    state = torch.load(out / "checkpoint.pt", weights_only=True)
+    del state["data_order"]
+    torch.save(state, out / "checkpoint.pt")
+    with pytest.raises(ValueError, match="데이터 순서"):
+        train(resume_args(base, data_dir, out, "--resume"))
+
+    # 이미 끝난 학습은 표시가 없어도 갱신 없이 끝난다
+    finished = tmp_path / "finished"
+    train(resume_args(base, data_dir, finished))
+    state = torch.load(finished / "checkpoint.pt", weights_only=True)
+    del state["data_order"]
+    torch.save(state, finished / "checkpoint.pt")
+    train(resume_args(base, data_dir, finished, "--resume"))
+    assert run_records(finished) == run_records(uninterrupted)
 
 
 def test_resume_of_finished_run_does_nothing(workspace, uninterrupted, tmp_path):

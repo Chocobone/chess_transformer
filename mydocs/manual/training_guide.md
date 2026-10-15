@@ -133,6 +133,46 @@ python -m src.train.train --player tal --base base_model/270M.pt --out runs/tal_
 - 메모리가 큰 GPU에서는 한도를 올려도 되지만 속도 이득은 크지 않다. **메모리 한계 근처까지 올리지 않는다** — 넘치면 실패하거나(리눅스) 극단적으로 느려진다(WSL).
 - 로그의 `max_memory_gib`로 실제 사용량을 확인한다.
 
+### 학습 중 평가와 GPU 메모리
+
+`max_memory_gib`는 PyTorch가 실제로 할당한 최대량이다. GPU 전체 사용량(`nvidia-smi`)은 이보다 훨씬 클 수 있다. PyTorch가 잡아 둔 예약 메모리, 그리고 데스크톱이 쓰는 0.3~1.2 GiB가 더해지기 때문이다. 학습 중 평가는 합법수 256개 묶음을 float32로 순전파하는데, 이때 예약 메모리가 학습이 잡아 둔 양 위에 더해진다.
+
+| 기사 (136M, 기본 할당 방식) | 학습만 돌 때 | 평가가 시작된 뒤 | 평가 1회 |
+|---|---|---|---|
+| 탈 | 7.41 GiB | 최대 9.75 GiB | 161초 |
+| 카르포프 | 8.01 GiB | 11.5~11.7 GiB (12 GiB 카드 한도) | 8.7분 → 뒤로 갈수록 38분 |
+
+카르포프처럼 전용 메모리를 넘기면 WSL에서는 오류 없이 시스템 메모리를 빌려 써서 극단적으로 느려진다. 카르포프는 평가 10회에 약 3.5시간이 걸렸고, 학습 구간 처리량도 떨어졌다.
+
+**대책: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`로 실행한다.** 스미슬로프에서 사전 측정으로 확인했다 (Task #4).
+
+| 스미슬로프 사전 측정 (60 갱신 + 평가 3회) | GPU 전체 최대 | 평가 1회 |
+|---|---|---|
+| 기본 할당 방식 | 11.29 GiB | 195초 |
+| `--eval-max-moves 128` | 9.95 GiB | 같음 |
+| `expandable_segments:True` | 5.57 GiB | 같음 |
+
+- `expandable_segments:True`는 학습 결과를 바꾸지 않는다. 60 갱신 어댑터의 SHA-256이 같았고, 본 학습 어댑터를 기본 방식으로 다시 평가한 값도 차이 0이었다.
+- 스미슬로프 본 학습은 이 설정으로 GPU 전체 최대 5.92 GiB, 평가 1회 약 194초로 끝까지 일정했다.
+- **환경변수는 `config.json`에 남지 않는다.** 실행 기록(`mydocs/test_result/`)에 명령과 함께 적는다. 탈·카르포프 136M은 이 환경변수 없이, 스미슬로프 136M은 이 환경변수로 학습했다.
+- GPU 전체 사용량을 적을 때는 `nvidia-smi`의 MiB를 1024로 나눠 GiB로 쓰고, MiB 값을 함께 적는다. Task #2~#4 기록에는 1000으로 나눈 값이 섞여 있어 정정 표시를 붙였다 (Task #6).
+
+### 136M 본 학습 실측
+
+RTX 4070 Ti 12GB(WSL2) 기준이다. `--eval-every 1000`, 나머지는 기본값이다.
+
+| | 탈 | 카르포프 | 스미슬로프 |
+|---|---|---|---|
+| 갱신 수 (3 epoch) | 7,455 | 9,039 | 8,736 |
+| 처리량 중앙값 | 24.7 국면/초 (갱신당 약 1.3초) | 23.7 | 25.5 |
+| `max_memory_gib` | 4.61 | 4.62 | 4.57 |
+| 평가 1회 (val 전체) | 161초 | 8.7~38분 (메모리 넘침) | 194초 |
+| 전체 소요 | 3시간 8분 | 7시간 18분 | 3시간 37분 |
+
+- 평가 지연이 없으면 136M 본 학습은 3.1~3.6시간이다.
+- 기본값 표의 `--eval-every`는 500이지만, 136M 본 학습에서는 평가 시간을 줄이려고 1000을 썼다.
+- val imitation 개선의 약 70%가 첫 1,000 갱신에서, 99% 이상이 2 epoch 안에서 났다. 세 기사의 결과 종합은 `mydocs/tech/adapters_136M_summary.md`에 있다.
+
 ### 저장물 (`--out` 폴더)
 
 | 파일 | 내용 |
@@ -190,15 +230,54 @@ python -u -m src.train.train --player tal --base base_model/136M.pt \
 
 오래 걸리는 학습은 터미널과 분리해 실행하고, 오류로 끝나면 같은 명령을 다시 실행하게 해 두면 사람이 지켜보지 않아도 된다. `--resume`이 붙어 있으므로 다시 실행하는 것만으로 이어진다.
 
+세 기사 136M 학습에는 아래 형태의 스크립트(`runs/logs/train_player.sh`, git 제외)를 썼다. 시도마다 시작·실패 시각과 체크포인트 step을 남기고, GPU 전체 사용량을 60초마다 기록한다. 최대 10회 다시 실행하며, 체크포인트가 전진하지 못한 채 연속 3회 실패하면 멈춘다.
+
 ```bash
-setsid nohup bash -c 'for attempt in 1 2 3 4 5; do
-    python -u -m src.train.train --player tal --base base_model/136M.pt \
-        --out runs/tal_136M --eval-every 1000 --resume && break
-    sleep 20
-done' > runs/logs/train_tal_136M.log 2>&1 < /dev/null &
+#!/bin/bash
+# 사용: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True setsid nohup runs/logs/train_player.sh tal \
+#           > runs/logs/train_tal_136M.log 2>&1 < /dev/null &
+player=$1; out=runs/${player}_136M
+ckpt_step() {
+  [ -f "$out/checkpoint.pt" ] || { echo 0; return; }
+  python -c "import torch; print(torch.load('$out/checkpoint.pt', map_location='cpu', weights_only=True)['step'])" 2>/dev/null || echo 0
+}
+( while :; do
+    echo "$(date '+%F %T'), $(nvidia-smi --query-gpu=memory.used,utilization.gpu,temperature.gpu --format=csv,noheader)"
+    sleep 60
+  done ) >> runs/logs/gpu_mem_${player}_136M.log 2>&1 &
+trap "kill $! 2>/dev/null" EXIT
+stuck=0
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  before=$(ckpt_step)
+  echo "=== $player 시도 $attempt 시작 $(date '+%F %T') (체크포인트 step $before)"
+  python -u -m src.train.train --player "$player" --base base_model/136M.pt \
+      --out "$out" --eval-every 1000 --resume
+  rc=$?; after=$(ckpt_step)
+  if [ $rc -eq 0 ]; then echo "=== $player 완료 $(date '+%F %T') (시도 $attempt회, step $after)"; exit 0; fi
+  echo "=== $player 시도 $attempt 실패 (종료 코드 $rc) $(date '+%F %T') (체크포인트 step $after)"
+  if [ "$after" -gt "$before" ]; then stuck=0; else stuck=$((stuck + 1)); fi
+  if [ $stuck -ge 3 ]; then echo "=== $player 중단: 진전 없이 연속 3회 실패"; exit 1; fi
+  sleep 20
+done
+echo "=== $player 중단: 시도 10회 소진"; exit 1
 ```
 
-로컬 GPU(RTX 4070 Ti 12GB, WSL2)에서는 같은 명령의 학습이 `CUDA error: device-side assert triggered`, `CUDA error: unspecified launch failure`로 여러 번 멈췄다 (Task #2, 탈 학습). 멈춘 지점이 실행마다 달랐고 다시 돌리면 재현되지 않았으며 원인은 찾지 못했다. 재개하면 학습은 정상적으로 이어졌다.
+- **중단 지점은 실행 로그에서 실패한 시도의 마지막 `train` 줄로 적는다.** `log.jsonl`은 재개할 때 체크포인트 뒤의 줄을 잘라 내므로, 실패한 시도가 체크포인트 뒤에 어디까지 갔는지는 실행 로그에만 남는다. 잃은 갱신은 "마지막 train 줄 − 체크포인트 step"에서 그 값 + 19 사이다. Task #2·#4 기록은 이것을 확인하지 않아 틀렸다 (Task #5에서 정정).
+- 사람이 학습을 끊어야 할 때(예: 처리량 저하)는 체크포인트가 저장된 직후에 끊으면 잃는 갱신이 거의 없다. 카르포프 학습에서 이렇게 두 번 끊었다.
+
+로컬 GPU(RTX 4070 Ti 12GB, WSL2)에서는 학습이 원인 불명의 CUDA 오류로 멈춘 적이 있다.
+
+| 학습 | 오류 | 멈춘 지점 |
+|---|---|---|
+| 탈 1차 (재개 기능 전) | `device-side assert triggered` (gather 인덱스 범위 초과) | 1,840 갱신 직후 |
+| 탈 2차 (재개 기능 전) | `unspecified launch failure` | step 4000 평가 직후 |
+| 탈 4차 시도 1 | `device-side assert triggered` | step 5000~5020 |
+| 스미슬로프 시도 1 | `device-side assert triggered` | step 5580~5600 |
+
+- 카르포프는 CUDA 오류 없이 끝났다.
+- 멈춘 지점은 실행마다 달랐다. 탈 1차 구간은 다시 돌려도 재현되지 않았다.
+- 오류는 프로세스를 끝내고, 재개는 마지막 체크포인트부터 다시 시작하므로 가중치가 오염되지 않는다.
+- 원인 조사는 보류 중이다. 자동 재시도로 대응한다.
 
 ### 짧게 먼저 돌려 보기
 
@@ -211,14 +290,17 @@ python -m src.train.train --player tal --base base_model/136M.pt --out runs/smok
 
 ## 7. 결과 저장
 
-학습이 끝나면 아래를 `mydocs/test_result/`에 저장한다. 파일명은 `task_m100_1_test_v2.md`처럼 기존 결과와 겹치지 않게 한다.
+학습이 끝나면 `mydocs/test_result/task_{milestone}_{번호}_test.md`에 아래를 정리한다. 후속 수정은 `_v2`처럼 접미어를 붙인다. 표의 수치는 `log.jsonl`·`config.json`·실행 로그를 읽는 스크립트로 뽑는다.
 
-- 실행한 명령 전체와 GPU 종류
+- 실행한 명령 전체, **환경변수**(`PYTORCH_CUDA_ALLOC_CONF` 등), GPU 종류, 코드 커밋
+- 시도별 시작·종료 시각, 종료 코드, 중단 지점(실패한 시도의 마지막 `train` 줄), 재개 step
 - `config.json`
 - `log.jsonl`의 `baseline` 줄과 모든 `eval` 줄, 마지막 `train` 줄 몇 개
+- 처리량, `max_memory_gib`, GPU 전체 사용량 최대(MiB와 ÷1024 GiB), 평가 1회 시간
+- `adapter.pt`의 크기와 SHA-256
 - 오류가 났다면 오류 메시지 전문
 
-어댑터 파일(`runs/`)과 캐시(`data/`)는 git에 올리지 않는다.
+어댑터 파일(`runs/`), 실행 로그·GPU 기록(`runs/logs/`), 캐시(`data/`)는 git에 올리지 않는다.
 
 ## 자주 나는 오류
 
@@ -230,5 +312,6 @@ python -m src.train.train --player tal --base base_model/136M.pt --out runs/smok
 | `CUDA out of memory` | `--max-moves-per-forward`를 낮춘다 |
 | `checkpoint.pt가 이미 있다` | 그 폴더에 이전 학습의 체크포인트가 있다. 이어서 돌리려면 `--resume`을 붙이고, 새로 시작하려면 폴더를 비운다 |
 | `체크포인트의 설정이 지금 인자와 다르다` | 처음 실행과 다른 학습 설정으로 재개하려 했다. 메시지에 나온 항목을 처음 값으로 맞춘다 |
-| `CUDA error: device-side assert triggered`, `unspecified launch failure` (학습 도중) | 로컬 GPU에서 원인 불명으로 발생했다. `--resume`으로 다시 실행한다 |
-| 스텝이 갑자기 수십 배 느려짐 | GPU 메모리가 넘쳐 시스템 메모리를 빌려 쓰는 상태다 (WSL). 한도를 낮춘다 |
+| `수정 전 데이터 순서 방식의 체크포인트다` | Task #5 전 코드가 남긴 체크포인트로 끝나지 않은 학습을 이으려 했다. 이어도 끊기지 않은 학습과 순서가 달라지므로 거부한다. 폴더를 비우고 새로 시작한다 |
+| `CUDA error: device-side assert triggered`, `unspecified launch failure` (학습 도중) | 로컬 GPU에서 원인 불명으로 발생했다 (탈 3회, 스미슬로프 1회). `--resume`으로 다시 실행한다. 자동 재시도 스크립트를 쓰면 사람이 없어도 이어진다 |
+| 스텝이 갑자기 수십 배 느려짐 | GPU 메모리가 넘쳐 시스템 메모리를 빌려 쓰는 상태다 (WSL). 학습 중 평가 뒤라면 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`로 다시 실행한다. 학습 구간이라면 `--max-moves-per-forward`를 낮춘다 |

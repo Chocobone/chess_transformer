@@ -105,7 +105,7 @@ python -u -m src.train.train --player smyslov --base base_model/136M.pt \
 
 | 시도 | 시작 | 종료 | 결과 |
 |------|------|------|------|
-| 1 | 04:08:30 | 06:21:49 | step 5,400~5,420 사이에서 CUDA 오류(device-side assert, `vectorized gather kernel index out of bounds`)로 종료. 마지막 체크포인트 step 5400 |
+| 1 | 04:08:30 | 06:21:49 | step 5,400~5,420 사이에서 CUDA 오류(device-side assert, `vectorized gather kernel index out of bounds`)로 종료. 마지막 체크포인트 step 5400 [정정 (2026-10-15, Task #5): 중단은 step 5,580~5,600 사이 (실패한 시도의 마지막 train 줄이 step 5580), 잃은 갱신 180~199] |
 | 2 | 06:22:11 | 07:45:06 | step 5400에서 자동 재개해 8,736 갱신까지 완료 |
 
 - 전체 소요 3시간 36분 36초. 로그의 누적 `elapsed`는 마지막 갱신까지 12,531초다 (평가 8회 포함, 마지막 평가 제외).
@@ -259,3 +259,4 @@ epoch별 train 줄 평균: loss 1.2321 / 1.0887 / 1.0708, imitation 1.2287 / 1.0
 - `train` 줄 437개의 step이 20, 40, …, 8720, 8736으로 빠짐·겹침이 없다 (재개 지점 5400 포함).
 - 저장된 `adapter.pt`를 새로 올린 베이스에 `load_adapter`로 붙여 val 전체를 다시 평가한 값이 마지막 `eval`의 7개 지표와 모두 같다 (차이 0). 이 재평가는 환경변수 없이(기본 할당 방식) 돌렸고, 198.1초가 걸렸으며, 최대 예약 메모리는 5.45 GiB였다 (어제 단독 측정과 같다).
 - 재개가 일어난 뒤의 구간(step 5400 이후)은 비교할 끊기지 않은 실행이 없다.
+  - **정정 (2026-10-15, Task #5)**: 같지 않았다. 수정 전 코드는 `--num-workers` > 0에서 epoch 1 이후에 재개하면 데이터 순서가 끊기지 않은 학습과 달라졌다. 스미슬로프는 step 5400(epoch 1)에서 재개해, epoch 1에서 국면 11,597개(12.45%)가 두 번, 같은 수가 한 번도 학습되지 않았다. epoch 2는 빠짐없이 학습했지만 순서가 다르다 (`mydocs/troubleshootings/resume_data_order.md`).

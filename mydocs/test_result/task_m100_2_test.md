@@ -24,7 +24,7 @@ python -u -m src.train.train --player tal --base base_model/136M.pt \
 
 | 시도 | 시작 | 종료 | 결과 |
 |------|------|------|------|
-| 1 | 05:22:02 | 07:21:28 | `CUDA error: device-side assert triggered`. 마지막 체크포인트 step 4800 |
+| 1 | 05:22:02 | 07:21:28 | `CUDA error: device-side assert triggered`. 마지막 체크포인트 step 4800 [정정 (2026-10-15, Task #5): 중단은 step 5000~5020 사이 (실패한 시도의 마지막 train 줄이 step 5000), 잃은 갱신 200~219] |
 | 2 | 07:21:50 | 08:29:59 | step 4800에서 재개해 7,455 갱신까지 완료 |
 
 - 전체 소요 3시간 8분 (05:22:02~08:29:59). 로그의 누적 `elapsed`는 마지막 갱신까지 10,807초다 (평가 7회 포함, 마지막 평가 제외).
@@ -177,6 +177,8 @@ python -u -m src.train.train --player tal --base base_model/136M.pt --out runs/r
 
 세 실행의 `log.jsonl`에서 `train`·`eval` 줄 34개의 수치가 모두 같다 (시간·메모리 값 제외). `checkpoint.pt`는 12,679,859바이트다.
 
+> **정정 (2026-10-15, Task #5)**: 이 확인은 epoch 0 안에서만 끊었다. 수정 전 코드는 `--num-workers` > 0에서 epoch 1 이후에 재개하면 데이터 순서가 끊기지 않은 학습과 달라졌다 (`mydocs/troubleshootings/resume_data_order.md`).
+
 ## 중단 기록 (탈, 2026-10-12)
 
 같은 명령·같은 seed의 실행이 네 번 중 세 번 CUDA 오류로 중단되었다. 실행들은 중단 전까지 기록이 서로 같다.
@@ -186,7 +188,7 @@ python -u -m src.train.train --player tal --base base_model/136M.pt --out runs/r
 | 1차 | 재개 없음 | 02:07:51 | 02:52:18 | 1,840 갱신 직후 | device-side assert (gather 인덱스 범위 초과) | 기록 없음 |
 | 2차 | 재개 없음 | 03:11:15 | 04:49:41 | step 4000 평가 직후 | unspecified launch failure | 기록 없음 (04:34에 10.3 GiB) |
 | 3차 | 재개 없음 | 04:53:31 | (05:12 무렵 수동 중지, 840 갱신) | | | 8.4 GiB |
-| 4차 시도 1 | 재개 있음 | 05:22:02 | 07:21:28 | step 4800~4820 | device-side assert | 9.98 GiB, 온도 71도 (그 전 60~63도) |
+| 4차 시도 1 | 재개 있음 | 05:22:02 | 07:21:28 | step 4800~4820 [정정 (2026-10-15, Task #5): 5000~5020] | device-side assert | 9.98 GiB, 온도 71도 (그 전 60~63도) |
 | 4차 시도 2 | 재개 있음 | 07:21:50 | 완료 08:29:59 | | | |
 
 - 1차 중단 구간(step 1801~1900)의 배치를 같은 seed로 복원해 GPU에서 순전파·손실 계산을 다시 했을 때 오류는 재현되지 않았다. 토큰 범위는 [0, 1963]으로 정상이다 (어휘 크기 1968).

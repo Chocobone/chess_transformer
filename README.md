@@ -5,7 +5,7 @@
 - 연구 제안서: [`docs/캡스톤 제안서 — Transformer 체스엔진 기반 기풍 스타일 주입.md`](docs/캡스톤%20제안서%20—%20Transformer%20체스엔진%20기반%20기풍%20스타일%20주입.md)
 - 기술 스택: Python 3.11+, PyTorch, python-chess
 
-## 현재 상태 (2026-10-15, M100)
+## 현재 상태 (2026-10-27, M100)
 
 | 단계 | 상태 |
 |---|---|
@@ -13,6 +13,7 @@
 | 136M 베이스 위 기사별 LoRA 어댑터 학습 (탈·카르포프·스미슬로프) | 완료 (Task #2~#4) |
 | 학습 재개 시 데이터 순서 결함 수정, 학습 기록 정정 | 완료 (Task #5) |
 | 세 어댑터 결과 종합, 교차 평가, 실행 가이드 갱신 | 완료 (Task #6) |
+| 모델과 직접 두어 보는 대국 앱 (확인용) | 완료 (Task #7) |
 | 스타일 특성 벡터 f(s,a), 방향 벡터 w_p (제안서 4.1~4.2) | 예정 |
 | α 스윕, 지문 거리·혼동 행렬·대국 성적 평가 (제안서 6장) | 예정 |
 | 270M 베이스 학습 | 예정 |
@@ -71,7 +72,7 @@
 ```bash
 # 1. 환경 (torch는 CUDA 버전에 맞는 휠을 먼저 설치)
 pip install -r requirements.txt
-pytest                                   # 116건 통과
+pytest                                   # 142건 통과
 
 # 2. 베이스 가중치: base_model/{136M,270M}.pt 를 준비한다 (가이드 2절. 원본은 base_model/download.sh)
 python scripts/verify_port.py --base base_model/136M.pt --reference base_model/reference_136M.npz
@@ -99,6 +100,17 @@ model.eval()
 
 `base_model/*.pt`, `data/`, `runs/`는 git에 올리지 않는다.
 
+## 대국 앱
+
+학습한 모델과 브라우저에서 직접 두어 보는 로컬 웹 앱이다. 베이스 세 크기와 136M 기사 어댑터 세 개 가운데 파일이 있는 것을 골라 둔다. 같은 국면에서 네 모델(베이스 136M·탈·카르포프·스미슬로프)의 후보 수를 나란히 보는 비교 패널도 있다.
+
+```bash
+python -m src.play.server                  # http://localhost:4321
+python -m src.play.server --host 0.0.0.0   # 개발 컨테이너·WSL2 안에서 띄우고 Windows 브라우저로 접속할 때
+```
+
+옵션, 화면 사용법, 수 선택 방식(π에서 T = 0.02로 샘플링), 응답 시간, 알려진 한계는 [`mydocs/manual/play_app.md`](mydocs/manual/play_app.md)에 있다.
+
 ## 저장소 구조
 
 ```
@@ -106,9 +118,10 @@ model.eval()
 │   ├── players.py            기사별 설정 (PGN 경로, 이름 식별)
 │   ├── data/                 PGN 전처리, 학습 데이터셋 (국면 + 베이스 q 캐시)
 │   ├── model/                토크나이저, 행동 사전, Transformer 이식, 가중치 변환, LoRA
-│   └── train/                정책, 손실, 학습 스크립트 (평가·체크포인트·재개)
+│   ├── train/                정책, 손실, 학습 스크립트 (평가·체크포인트·재개)
+│   └── play/                 대국 앱: 추론 엔진, 대국 상태, FastAPI 서버, 화면(static/)
 ├── scripts/                  베이스 q 캐시, 이식 검증, JAX 가중치 추출
-├── tests/                    pytest (전처리, 모델 이식, LoRA, 손실, 학습·재개)
+├── tests/                    pytest (전처리, 모델 이식, LoRA, 손실, 학습·재개, 대국 앱)
 ├── player_pgn/               탈·카르포프·스미슬로프 기보
 ├── base_model/               베이스 체크포인트 (download.sh만 git에 있음)
 ├── docker/                   로컬 GPU 개발 컨테이너
@@ -121,6 +134,7 @@ model.eval()
 | 문서 | 내용 |
 |---|---|
 | [`mydocs/manual/training_guide.md`](mydocs/manual/training_guide.md) | 학습 실행 가이드 |
+| [`mydocs/manual/play_app.md`](mydocs/manual/play_app.md) | 대국 앱 사용 가이드 |
 | [`mydocs/tech/adapters_136M_summary.md`](mydocs/tech/adapters_136M_summary.md) | 세 어댑터 종합: 지표, 곡선, 조건 차이, 교차 평가, 한계 |
 | [`mydocs/troubleshootings/resume_data_order.md`](mydocs/troubleshootings/resume_data_order.md) | 학습 재개 시 데이터 순서 결함 (Task #5) |
 | `mydocs/report/task_m100_{N}_report.md` | 타스크별 최종 결과보고서 |
@@ -138,6 +152,7 @@ model.eval()
 | #4 | 스미슬로프 136M 어댑터 학습 (평가 메모리 대책) | [`task_m100_4_report.md`](mydocs/report/task_m100_4_report.md) |
 | #5 | 학습 재개 데이터 순서 수정, 기록 정정 | [`task_m100_5_report.md`](mydocs/report/task_m100_5_report.md) |
 | #6 | 세 어댑터 결과 종합, 교차 평가, 가이드 갱신 | [`task_m100_6_report.md`](mydocs/report/task_m100_6_report.md) |
+| #7 | 모델과 사용자가 대국하는 체스 앱 (유저 확인용) | [`task_m100_7_report.md`](mydocs/report/task_m100_7_report.md) |
 
 ## 알려진 한계
 

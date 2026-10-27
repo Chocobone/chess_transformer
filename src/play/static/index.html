@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>체스 대국 앱</title>
+  <link rel="icon" href="/static/piece/cburnett/wN.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img src="/static/piece/cburnett/wN.svg" alt=""><span>체스 대국</span></div>
+    <nav class="topbar-actions">
+      <label class="switch" title="같은 국면에서 네 모델의 후보 수를 나란히 봅니다">
+        <input type="checkbox" id="compare-toggle">
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+        <span>비교 패널</span>
+      </label>
+      <button class="button primary" id="new-game">새 대국</button>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <aside class="side">
+      <section class="panel game-info" id="game-info">
+        <div class="game-info-title">컴퓨터와 대국</div>
+        <div class="game-info-body" id="game-info-body">대국을 시작하세요</div>
+      </section>
+      <section class="panel compare" id="compare-panel" hidden>
+        <div class="panel-title">비교 패널 <span class="muted" id="compare-caption"></span></div>
+        <div id="compare-body" class="compare-body"></div>
+      </section>
+    </aside>
+
+    <section class="board-column">
+      <div class="board-wrap">
+        <div class="board" id="board"></div>
+        <div class="promotion" id="promotion" hidden></div>
+        <div class="board-overlay" id="result-overlay" hidden></div>
+      </div>
+      <section class="panel candidates">
+        <div class="panel-title">모델이 고려한 후보 수 <span class="muted" id="candidates-caption"></span></div>
+        <div id="candidates-body" class="candidates-body"><div class="empty">모델이 수를 두면 후보가 나타납니다</div></div>
+      </section>
+    </section>
+
+    <aside class="table">
+      <div class="player opponent" id="opponent">
+        <span class="player-dot"></span>
+        <span class="player-name" id="opponent-name">모델</span>
+        <span class="player-extra" id="opponent-extra"></span>
+      </div>
+      <div class="moves-box">
+        <div class="moves" id="moves"></div>
+        <div class="nav">
+          <button class="icon-button" id="nav-first" title="처음 (Home)">⏮</button>
+          <button class="icon-button" id="nav-prev" title="이전 (←)">◀</button>
+          <button class="icon-button" id="nav-next" title="다음 (→)">▶</button>
+          <button class="icon-button" id="nav-last" title="현재 (End)">⏭</button>
+        </div>
+        <div class="controls">
+          <button class="button" id="undo" title="내 마지막 수까지 무르기">⟲ 무르기</button>
+          <button class="button" id="resign" title="기권">⚑ 기권</button>
+          <a class="button" id="pgn" href="/api/game/pgn" download title="기보를 PGN 파일로 저장">↓ PGN</a>
+        </div>
+      </div>
+      <div class="player me" id="me">
+        <span class="player-dot"></span>
+        <span class="player-name">사용자</span>
+        <span class="player-extra" id="me-extra"></span>
+      </div>
+    </aside>
+  </main>
+
+  <div class="modal-backdrop" id="setup" hidden>
+    <div class="modal" role="dialog" aria-labelledby="setup-title">
+      <button class="modal-close" id="setup-close" title="닫기">×</button>
+      <h2 id="setup-title">컴퓨터와 대국</h2>
+      <div class="setup-section">
+        <div class="setup-label">상대 모델</div>
+        <div class="model-list" id="model-list"></div>
+      </div>
+      <div class="setup-section">
+        <div class="setup-label">내 색</div>
+        <div class="color-choice">
+          <button class="color-button" data-color="black" title="흑"><img src="/static/piece/cburnett/bK.svg" alt="흑"></button>
+          <button class="color-button random" data-color="random" title="무작위"><img src="/static/piece/cburnett/wK.svg" alt=""><img src="/static/piece/cburnett/bK.svg" alt=""></button>
+          <button class="color-button" data-color="white" title="백"><img src="/static/piece/cburnett/wK.svg" alt="백"></button>
+        </div>
+      </div>
+      <p class="setup-note">모델은 학습 정책 π(a|s) = softmax(q / 0.02)에서 수를 샘플링합니다.</p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/static/board.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

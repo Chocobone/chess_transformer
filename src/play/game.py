@@ -112,7 +112,8 @@ class Game:
             "last_move": self.records[-1].uci if self.records else None,
             "check": chess.square_name(king) if self.board.is_check() and king is not None else None,
             "moves": [
-                {"uci": r.uci, "san": r.san, "by": r.by, "fen": r.fen, "prob": r.prob, "repetition": r.repetition}
+                {"uci": r.uci, "san": r.san, "by": r.by, "fen": r.fen, "prob": r.prob, "repetition": r.repetition,
+                 "analysis": asdict(r.analysis) if r.analysis else None}
                 for r in self.records
             ],
             "last_analysis": asdict(last_model.analysis) if last_model and last_model.analysis else None,

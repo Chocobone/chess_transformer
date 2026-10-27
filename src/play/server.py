@@ -1,6 +1,6 @@
 """대국 앱 서버. 로컬 한 사용자용이므로 진행 중인 대국은 메모리에 하나만 둔다.
 
-실행: python -m src.play.server [--host 127.0.0.1] [--port 8000] [--device cuda] [--seed N]
+실행: python -m src.play.server [--host 127.0.0.1] [--port 4321] [--device cuda] [--seed N]
 """
 
 import argparse
@@ -147,7 +147,7 @@ def create_app(engine: Engine, seed: int) -> FastAPI:
 def main() -> None:
     parser = argparse.ArgumentParser(description="모델과 사용자가 대국하는 로컬 웹 앱")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=4321)
     parser.add_argument("--device", default=None, help="기본: CUDA가 있으면 cuda")
     parser.add_argument("--seed", type=int, default=None, help="모델 수 샘플링 시드. 기본: 매번 무작위")
     parser.add_argument("--base-dir", default="base_model")

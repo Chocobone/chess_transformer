@@ -20,6 +20,9 @@ services:
       # 클로드 코드 로그인 정보와 git 전역 설정을 컨테이너 재생성 후에도 유지한다
       - chess-dev-home:/home/dev
     command: sleep infinity
+    # 대국 앱 (python -m src.play.server --host 0.0.0.0). 호스트의 localhost:4321로만 연다
+    ports:
+      - "127.0.0.1:4321:4321"
     deploy:
       resources:
         reservations:

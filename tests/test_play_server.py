@@ -89,6 +89,7 @@ def test_play_a_game(client):
         assert last["by"] == "model" and 0 < last["prob"] <= 1
         analysis = state["last_analysis"]
         assert analysis["model_id"] == "tal-136M" and 1 <= len(analysis["candidates"]) <= 5
+        assert last["analysis"] == analysis and state["moves"][-2]["analysis"] is None
         board = replay(state["moves"])
         assert state["fen"] == board.fen() == last["fen"]
         if state["outcome"]:

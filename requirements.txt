@@ -4,3 +4,7 @@ torch>=2.4
 chess>=1.11
 numpy>=2.0
 pytest>=8.0
+# 대국 앱 (src/play/)
+fastapi>=0.162
+uvicorn>=0.54
+httpx>=0.28  # 테스트 전용 (FastAPI TestClient)

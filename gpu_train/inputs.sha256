@@ -1,0 +1,28 @@
+# 입력 파일 13개. 확인: bash gpu_train/check_inputs.sh
+# 만든 날: 2026-11-04, 커밋: 2812f1e
+# 545946077 bytes  base_model/136M.pt
+# 16359267 bytes  data/processed/tal/train.jsonl
+# 798624 bytes  data/processed/tal/val.jsonl
+# 818 bytes  data/processed/tal/stats.json
+# 16841828 bytes  data/processed/tal/base_q_136M.npz
+# 19801959 bytes  data/processed/karpov/train.jsonl
+# 1070418 bytes  data/processed/karpov/val.jsonl
+# 4891 bytes  data/processed/karpov/stats.json
+# 20106888 bytes  data/processed/karpov/base_q_136M.npz
+# 19187409 bytes  data/processed/smyslov/train.jsonl
+# 978904 bytes  data/processed/smyslov/val.jsonl
+# 899 bytes  data/processed/smyslov/stats.json
+# 19320174 bytes  data/processed/smyslov/base_q_136M.npz
+8afa9f268ba0e23f428055a0e5cc852bc87e7a3d1339a24dc415f6f3619a4a19  base_model/136M.pt
+97d0dfd7944ec3d4d80a1a7e40754ad33830c3ea7d38f1ddd271872cea21ae2f  data/processed/tal/train.jsonl
+2ae8f2d17d89703b6c094a153b327632903880aede013a028ef66feeca38a773  data/processed/tal/val.jsonl
+d69fde9934581103d45454f02d0fafb5034526081a66d8fdfc8b59c980bdef32  data/processed/tal/stats.json
+04b537acb2f83718a6bc13b85e12cc0fc20de957d36a04db9f23929f1e531e19  data/processed/tal/base_q_136M.npz
+6817cb2d2f8acadba2f56283a57d3d67f05e09f8dba4656fcc7a76c54720dcb7  data/processed/karpov/train.jsonl
+78f4232cde2392ca3984134f97e986243b83e11a5b26e3ebac6f3a0781d79f0f  data/processed/karpov/val.jsonl
+828168b5018e97defbb659a9d483253e391e50650a02dc9bc27e910948b0e1a5  data/processed/karpov/stats.json
+4606d36323b43a79e43fe3c0ac9fc1bde7170bb840afceb8ea3ec1440c7ed8a3  data/processed/karpov/base_q_136M.npz
+9cfe215b3f418181d69bb6e03c648dc419b3bb106cd5f0e7b1afd3994b8471f3  data/processed/smyslov/train.jsonl
+f1dea94c811cbe165237be331416273ff3131778f67245187f761a6a42701c03  data/processed/smyslov/val.jsonl
+ee98b461af73f6d989af376022c9da5aeb7aa1d64741cec39c94f9a331ef24b9  data/processed/smyslov/stats.json
+b0904be63c28c1f4318e816f99c5ec6f398b1f4aab51915fa8a61e6b1b82f87e  data/processed/smyslov/base_q_136M.npz

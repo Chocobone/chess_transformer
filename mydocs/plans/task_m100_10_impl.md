@@ -22,7 +22,10 @@ gpu_train/
 ├── train.sbatch         ← 작업 스크립트. Slurm 밖에서도 실행 가능 (3단계)
 ├── submit.sh            ← site.env 값으로 sbatch 옵션을 붙여 제출 (3단계)
 ├── collect.sh           ← 결과 묶음 생성 (4단계)
-└── README.md            ← 매뉴얼 (4단계)
+├── README.md            ← 매뉴얼 (4단계, 5단계에서 3절 갱신)
+├── inputs.hf            ← 입력을 받을 Hugging Face 저장소와 고정 리비전 (5단계, 커밋)
+├── upload_inputs.sh     ← 로컬에서 입력을 Hugging Face 비공개 저장소에 올린다 (5단계)
+└── fetch_inputs.sh      ← 서버에서 고정 리비전의 입력을 받고 확인한다 (5단계)
 
 runs/gpu/                ← 서버·로컬 산출물 (git 제외)
 ├── {RUN}/               ← train.py --out (adapter.pt, checkpoint.pt, config.json, log.jsonl)
@@ -266,14 +269,86 @@ CHAIN_MAX=10       # 한 학습에서 이어서 제출하는 작업 수의 상�
 
 ---
 
-## 서버 smoke (4단계 승인 뒤, 작업지시자 실행)
+## 5단계: 입력 배포 (Hugging Face Hub 비공개 저장소)
+
+추가 단계 (작업지시자 결정, 2026-11-04). 4단계 뒤에 조사해 보니 로컬 개발 컨테이너에 `rsync`, `scp`, `ssh`가 없어서, README 3절의 직접 전송을 여기서 실행할 수 없었다. 입력(13개, 660,418,156 bytes)을 Hugging Face Hub의 비공개 저장소에 올리고, 서버는 고정한 리비전을 받아 체크섬으로 확인한다. 입력이 바뀔 때도 같은 절차로 갱신한다.
+
+### 목표
+
+- 로컬: 명령 하나로 입력을 올리고, 올린 리비전을 저장소 파일에 고정한다.
+- 서버: 명령 하나로 그 리비전을 받고 `check_inputs.sh`까지 통과시킨다.
+- 갱신: 새로 올리고 → 리비전 파일을 커밋하고 → 서버에서 `git pull` 후 다시 받는다. 바뀐 파일만 받는다.
+
+### 구현
+
+**`gpu_train/inputs.hf`** (커밋. 비밀 값은 없다):
+
+```bash
+HF_REPO=           # 예: 계정명/chess-transformer-inputs (비공개 model 저장소)
+HF_REVISION=       # 올린 커밋의 해시 (40자). upload_inputs.sh가 채운다
+HF_TAG=            # 같은 커밋의 태그 (예: inputs-20261104). 사람이 읽기 위한 값
+```
+
+- 서버는 태그가 아니라 커밋 해시로 받는다. 태그는 옮겨 붙일 수 있지만 커밋 해시는 바뀌지 않기 때문이다.
+
+**`gpu_train/upload_inputs.sh 저장소ID`** (로컬, 쓰기 토큰 필요):
+
+1. `check_inputs.sh`로 로컬 입력이 매니페스트와 같은지 먼저 확인한다
+2. 저장소가 없으면 **비공개**로 만든다. 이미 있으면 공개 여부를 확인하고, 공개 저장소면 멈춘다
+3. `inputs.sha256`에 적힌 13개 파일과 `inputs.sha256` 자신을 같은 상대 경로로 커밋 하나에 올린다. 커밋 메시지에 날짜와 저장소 커밋을 적는다
+4. 그 커밋에 태그 `inputs-{날짜}`를 붙인다 (같은 날 두 번이면 `-2`)
+5. `gpu_train/inputs.hf`에 저장소 ID, 커밋 해시, 태그를 쓴다. 커밋은 사람이 한다
+
+- `huggingface_hub`의 Python API(`HfApi.create_repo`, `create_commit`, `create_tag`)를 쓴다. CLI는 버전마다 이름이 달라졌기 때문이다(`huggingface-cli` → `hf`).
+
+**`gpu_train/fetch_inputs.sh`** (서버 로그인 노드, 읽기 토큰 필요):
+
+1. `inputs.hf`를 읽는다. 값이 비었으면 멈춘다
+2. 고정 리비전에서 `inputs.sha256`에 적힌 파일만 저장소 루트로 받는다 (`snapshot_download(…, revision=HF_REVISION, allow_patterns=…, local_dir=.)`). 이미 받은 파일 중 같은 것은 다시 받지 않는다
+3. 받은 `inputs.sha256`이 git의 `inputs.sha256`과 같은지 본다. 다르면 리비전과 매니페스트가 어긋난 것이므로 멈춘다
+4. `check_inputs.sh`를 실행한다
+
+- 받기 중 생기는 `.cache/huggingface/`(저장소 루트)는 `.gitignore`에 넣는다.
+
+**토큰** — 저장소와 설정 파일에 두지 않는다:
+
+- 로컬(올리기): 쓰기 권한 토큰으로 `hf auth login`. 작업지시자가 직접 한다 (`! hf auth login`)
+- 서버(받기): **그 저장소만 읽을 수 있는 fine-grained 토큰**으로 `hf auth login`, 또는 `HF_TOKEN` 환경변수. 토큰은 `~/.cache/huggingface/token`에 저장된다
+
+**의존성**: `requirements.txt`에 `huggingface_hub`를 한 줄 더한다. 서버는 `setup_env.sh`가 함께 설치하고, 로컬은 `pip install -r requirements.txt`로 설치한다. `src/` 코드는 이 패키지를 쓰지 않는다.
+
+**문서**:
+
+- `gpu_train/README.md`
+  - 3절: Hugging Face로 받기를 기본으로 하고, 직접 전송(rsync)은 대안으로 남긴다. 서버 토큰을 만드는 방법을 적는다
+  - 1절 흐름도·파일 표, 10절 문제 해결(401·403·404, 리비전 불일치), 11절 입력 갱신 절차(`make_manifest.sh` → `upload_inputs.sh` → `inputs.hf` 커밋)
+  - 순서도 바꾼다: 환경 구성(5절)이 `huggingface_hub`를 설치하므로, 입력 받기가 환경 구성 뒤로 온다
+- `mydocs/manual/training_guide.md` 2절 방법 A에 한 줄
+
+### 검증
+
+- `bash -n` 통과, 전체 pytest 통과, `src/` 변경 없음
+- 토큰이 없을 때, `inputs.hf`가 비었을 때 이유를 출력하고 멈추는지
+- **실제 업로드** (작업지시자가 로컬에서 `hf auth login`을 한 뒤. 외부 서비스에 올리는 일이므로 실행 직전에 저장소 ID와 함께 한 번 더 확인받는다):
+  - 비공개 저장소가 만들어지고 13개 + 매니페스트가 올라가는지
+  - 태그와 `inputs.hf`가 채워지는지
+  - 로그인하지 않은 상태로 받으려 하면 거부되는지 (비공개 확인)
+- **받기 확인** (로컬 스크래치패드에 저장소 사본을 만들어, 서버 대신):
+  - 빈 사본에서 `fetch_inputs.sh` → `check_inputs.sh` 통과
+  - 파일 하나를 지우고 다시 받으면 그 파일만 받는지
+  - 파일 하나를 1바이트 바꾸면 다시 받거나 `check_inputs.sh`에서 걸리는지
+
+---
+
+## 서버 smoke (5단계 승인 뒤, 작업지시자 실행)
 
 `gpu_train/README.md` 2~6절을 따라 서버에서 실행한다. 다음을 `mydocs/test_result/task_m100_10_test.md`에 저장해 주시면 최종 보고서에서 확인한다.
 
 - `setup_env.sh` 출력 끝부분 (torch·CUDA 버전, pytest 결과)
 - `runs/gpu/meta/smoke_*.txt`
 - `collect.sh smoke`의 `SUMMARY.txt`
-- 이어서 제출 사슬이 생겼다가 취소됐는지 (`sacct -n smoke` 출력)
+- 이어서 제출 사슬이 생겼다가 취소됐는지 (`sacct --name=smoke` 출력. 처음 계획의 `sacct -n smoke`는 `-n`이 머리글 없음 옵션이라 틀렸다)
+- `fetch_inputs.sh` 출력 끝부분 (받은 리비전, `check_inputs.sh` 결과)
 
 ## 검증 (전체)
 
@@ -282,4 +357,6 @@ CHAIN_MAX=10       # 한 학습에서 이어서 제출하는 작업 수의 상�
 - 로컬 smoke(Slurm 밖 실행)와 재시도 확인 통과
 - 서버 smoke 결과 확인 (최종 보고서)
 
-## 예상 단계: 4단계
+## 예상 단계: 5단계
+
+- 1~4단계는 처음 계획이고, 5단계(입력 배포)는 4단계 뒤에 더했다 (작업지시자 결정, 2026-11-04).

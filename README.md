@@ -136,6 +136,7 @@ python -m src.play.server --host 0.0.0.0   # 개발 컨테이너·WSL2 안에서
 | [`mydocs/manual/training_guide.md`](mydocs/manual/training_guide.md) | 학습 실행 가이드 |
 | [`mydocs/manual/play_app.md`](mydocs/manual/play_app.md) | 대국 앱 사용 가이드 |
 | [`mydocs/tech/adapters_136M_summary.md`](mydocs/tech/adapters_136M_summary.md) | 세 어댑터 종합: 지표, 곡선, 조건 차이, 교차 평가, 한계 |
+| [`mydocs/tech/evaluation_criteria.md`](mydocs/tech/evaluation_criteria.md) | 기풍 주입 평가 기준 (고정): 주장 A~D별 지표·판정, 종합 판정, 학습 설계 (Task #9) |
 | [`mydocs/troubleshootings/resume_data_order.md`](mydocs/troubleshootings/resume_data_order.md) | 학습 재개 시 데이터 순서 결함 (Task #5) |
 | `mydocs/report/task_m100_{N}_report.md` | 타스크별 최종 결과보고서 |
 | `mydocs/test_result/task_m100_{N}_test.md` | 학습·평가 실행 기록 |

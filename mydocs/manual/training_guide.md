@@ -23,6 +23,8 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available())"   
 
 로컬 컨테이너를 쓸 때는 `docker/compose.yml`이 GPU를 연결한다.
 
+Slurm(sbatch)과 Miniconda를 쓰는 GPU 서버에서는 [`gpu_train/README.md`](../../gpu_train/README.md)의 절차를 따른다. 환경 구성부터 제출, 이어서 학습, 결과 회수까지 스크립트로 한다.
+
 ## 2. 베이스 가중치 준비
 
 학습 코드는 변환된 PyTorch 체크포인트(`base_model/{크기}.pt`)만 읽는다. 준비 방법은 두 가지다.

@@ -15,7 +15,7 @@
 
 | 날짜 | 절 | 내용 | 이유 |
 |---|---|---|---|
-| (없음) | | | |
+| 2026-11-04 | 8.2 | 실행 환경을 Docker에서 Miniconda 환경과 Slurm(sbatch)으로 바꿨다. 실행 행에 sbatch 제출과 시간 제한 뒤 이어서 제출을, 평가 확장 행에 conda 환경 기준을 적었다. 판정 기준과 학습 설계(8.1)는 바뀌지 않는다 | 학습 서버는 sbatch로 작업을 받고, Docker 대신 Miniconda 환경을 쓴다 (작업지시자 결정, Task #10 [#10](https://github.com/Chocobone/chess_transformer/issues/10)) |
 
 ---
 
@@ -645,19 +645,19 @@ D4(λ, τ 용량 반응), D5(LoRA 배율 보간), D7(기사 라벨 통제), 무�
 
 ### 8.2 GPU 서버 학습 디렉토리 요구 사항 (`gpu_train/`)
 
-학습은 별도 GPU 서버에서 한다 (작업지시자 결정, 2026-11-04). 디렉토리는 후속 이슈에서 만든다.
+학습은 별도 GPU 서버에서 한다 (작업지시자 결정, 2026-11-04). 디렉토리는 후속 이슈에서 만든다. → Task #10에서 만들었다. 절차는 `gpu_train/README.md`에 있다.
 
 | 항목 | 요구 사항 |
 |---|---|
-| 실행 환경 | 학습 전용 Dockerfile과 compose 파일. 로컬 개발용 `docker/`와 분리하고 개발 도구는 넣지 않는다. 호스트에 NVIDIA 드라이버와 Container Toolkit이 있어야 한다 |
+| 실행 환경 | ~~학습 전용 Dockerfile과 compose 파일. 로컬 개발용 `docker/`와 분리하고 개발 도구는 넣지 않는다. 호스트에 NVIDIA 드라이버와 Container Toolkit이 있어야 한다~~ **정정 (2026-11-04, Task #10)**: Miniconda 환경(`environment.yml`, Python 3.13). torch와 `requirements.txt`는 pip로 설치한다. 서버마다 다른 값(경로, conda, Slurm 옵션)은 작업지시자가 설정 파일 빈칸에 채운다 |
 | 입력 | 베이스 `base_model/136M.pt`, 전처리 데이터와 베이스 q 캐시(`data/processed/`). 서버로 옮기는 방법과 체크섬 확인 방법을 적는다 |
 | 학습 목록 | R1~R10을 ID별 설정(기사, α, λ, τ, seed)으로 정의한다. 지금은 R1·R2·R8만 실행할 수 있고, 나머지는 특성 구현 뒤 같은 형식으로 추가한다 |
-| 실행 | 학습 ID 하나로 실행하는 스크립트. 오류가 나면 마지막 체크포인트에서 자동 재개하고(기존 `train_player.sh` 방식), `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`를 쓴다 |
+| 실행 | 학습 ID 하나로 실행하는 스크립트. 오류가 나면 마지막 체크포인트에서 자동 재개하고(기존 `train_player.sh` 방식), `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`를 쓴다. **정정 (2026-11-04, Task #10)**: 학습 ID 하나로 sbatch에 제출한다. 작업 시간 제한에 걸리면 다음 작업이 체크포인트에서 이어 간다 |
 | 기록 | 코드 커밋 해시, 설정, GPU 종류와 메모리, 시작·종료 시각, 재개 횟수를 출력 폴더에 남긴다 |
 | 결과 회수 | 회수할 파일(어댑터, `config.json`, 로그, val 지표)과 형식을 정한다. 사용자가 결과를 `mydocs/test_result/`에 저장한다 |
 | 사전 확인 | 짧은 시험 학습(smoke)으로 GPU 메모리와 처리량을 확인한 뒤 본 학습을 시작한다 |
 | 매뉴얼 | 위 절차를 `gpu_train/README.md`에 한국어로 적는다 |
-| 평가 확장 (선택) | 대국·Stockfish 평가도 GPU 서버에서 돌린다면, 같은 이미지에 Stockfish(버전 고정)를 넣을 수 있게 구성한다. 넣을지는 대국 실행기 이슈에서 정한다 |
+| 평가 확장 (선택) | 대국·Stockfish 평가도 GPU 서버에서 돌린다면, ~~같은 이미지에~~ **정정 (2026-11-04, Task #10)**: 같은 conda 환경이나 서버에 Stockfish(버전 고정)를 넣을 수 있게 구성한다. 넣을지는 대국 실행기 이슈에서 정한다 |
 
 ### 8.3 후속 이슈와 순서
 

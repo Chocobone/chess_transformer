@@ -7,6 +7,6 @@ cd "$(dirname "$0")/.."
 if sha256sum --quiet -c gpu_train/inputs.sha256; then
   echo "입력 확인 통과: $(grep -cv '^#' gpu_train/inputs.sha256)개"
 else
-  echo "입력 확인 실패: 위 파일을 다시 옮긴다 (gpu_train/README.md 3절)" >&2
+  echo "입력 확인 실패: fetch_inputs.sh를 다시 실행하거나 위 파일을 다시 옮긴다 (gpu_train/README.md 5절)" >&2
   exit 1
 fi

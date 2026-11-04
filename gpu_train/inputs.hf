@@ -1,0 +1,6 @@
+# 서버가 입력을 받을 Hugging Face 저장소와 고정 리비전. upload_inputs.sh가 채우고, 사람이 커밋한다.
+# fetch_inputs.sh는 HF_REVISION(커밋 해시)으로 받는다. 태그는 사람이 읽기 위한 값이다.
+# 비밀 값(토큰)은 여기에 두지 않는다.
+HF_REPO=chocobone/player_chessengine
+HF_REVISION=5f48d15f01e4afce8e05bae8b5b50425a80fc368
+HF_TAG=inputs-20261104

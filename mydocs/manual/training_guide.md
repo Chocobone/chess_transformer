@@ -31,7 +31,7 @@ Slurm(sbatch)과 Miniconda를 쓰는 GPU 서버에서는 [`gpu_train/README.md`]
 
 ### 방법 A: 변환된 파일을 복사한다 (권장)
 
-로컬에서 이미 변환과 검증을 마친 파일이 있다. 서버의 `base_model/`에 복사하면 JAX 환경이 필요 없다.
+로컬에서 이미 변환과 검증을 마친 파일이 있다. 서버의 `base_model/`에 복사하면 JAX 환경이 필요 없다. Slurm GPU 서버에서는 Hugging Face 비공개 저장소에서 데이터·q 캐시와 함께 받는다 (`gpu_train/README.md` 5절).
 
 | 파일 | 크기 |
 |------|------|

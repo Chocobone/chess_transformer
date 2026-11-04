@@ -8,3 +8,5 @@ pytest>=8.0
 fastapi>=0.162
 uvicorn>=0.54
 httpx>=0.28  # 테스트 전용 (FastAPI TestClient)
+# GPU 서버 입력 올리기·받기 (gpu_train/upload_inputs.sh, fetch_inputs.sh)
+huggingface_hub>=1.0

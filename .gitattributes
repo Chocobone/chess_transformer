@@ -4,3 +4,4 @@
 *.sbatch text eol=lf
 gpu_train/site.env* text eol=lf
 gpu_train/inputs.sha256 text eol=lf
+gpu_train/inputs.hf text eol=lf

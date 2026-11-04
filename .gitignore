@@ -16,3 +16,6 @@ base_model/*.npz
 
 # GPU 서버 설정 (서버마다 다르다. gpu_train/site.env.example을 복사해 채운다)
 gpu_train/site.env
+
+# Hugging Face에서 입력을 받을 때 저장소 루트에 생기는 메타데이터 (gpu_train/fetch_inputs.sh)
+/.cache/huggingface/

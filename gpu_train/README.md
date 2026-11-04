@@ -7,9 +7,10 @@
 ```
 로컬                                서버 (로그인 노드)                   서버 (계산 노드, sbatch)
 ────                                ──────────────────                   ────────────────────────
-입력 13개 rsync  ──────────────→    check_inputs.sh
-                                    site.env 채우기
+upload_inputs.sh ─→ Hugging Face (비공개)
+                         └──────→   site.env 채우기
                                     setup_env.sh (conda env, pytest)
+                                    fetch_inputs.sh (받기, check_inputs.sh)
                                     submit.sh smoke  ─────────────→      train.sbatch smoke
                                     submit.sh R1 / R2 / R8  ──────→      train.sbatch R1 …
                                     collect.sh R1
@@ -22,6 +23,9 @@ mydocs/test_result/에 정리
 | `runs.py` | 학습 ID(R1~R10, smoke)별 설정. `python -m gpu_train.runs list`로 목록을 본다 |
 | `inputs.sha256`, `check_inputs.sh` | 입력 13개의 SHA-256과 확인 스크립트 |
 | `make_manifest.sh` | `inputs.sha256`을 다시 만든다 (입력을 바꿨을 때만, 로컬에서) |
+| `inputs.hf` | 입력을 받을 Hugging Face 저장소 ID와 고정 커밋 해시 |
+| `upload_inputs.sh` | 로컬에서 입력을 Hugging Face 비공개 저장소에 올리고 `inputs.hf`를 채운다 |
+| `fetch_inputs.sh` | 서버에서 `inputs.hf`의 리비전을 받고 `check_inputs.sh`로 확인한다 |
 | `environment.yml`, `setup_env.sh` | conda 환경 (Python 3.13). torch와 `requirements.txt`는 pip로 설치한다 |
 | `site.env.example` | 서버마다 다른 값의 빈칸. `site.env`로 복사해 채운다 (git 제외) |
 | `submit.sh` | 학습 하나를 sbatch로 제출한다 |
@@ -50,29 +54,7 @@ git log --oneline -1        # 학습할 커밋을 확인해 둔다. 작업 기�
 - 계산 노드에서도 같은 경로로 보이는 곳(공유 파일 시스템)에 받는다. 이 경로를 `site.env`의 `REPO_DIR`에 적는다.
 - 학습 도중에는 `git pull`을 하지 않는다. 이어서 제출된 작업이 바뀐 코드로 돌게 된다. 학습마다 작업 기록에 `git HEAD`와 미커밋 변경이 남는다.
 
-## 3. 입력 옮기기
-
-베이스 가중치와 전처리 데이터·q 캐시는 git에 없다. 로컬 저장소 루트에서 서버로 옮긴다. 13개 파일, 660,418,156 bytes(약 630 MiB)다.
-
-```bash
-# 로컬 저장소 루트에서. -R은 상대 경로를 그대로 유지한다
-rsync -avR --progress \
-  base_model/136M.pt \
-  data/processed/{tal,karpov,smyslov}/{train.jsonl,val.jsonl,stats.json,base_q_136M.npz} \
-  사용자@서버:/서버의/저장소/경로/
-```
-
-rsync가 없으면 같은 상대 경로로 `scp`한다. 파일 목록은 `gpu_train/inputs.sha256`에 있다.
-
-서버에서 확인한다:
-
-```bash
-bash gpu_train/check_inputs.sh      # "입력 확인 통과: 13개"가 나와야 한다
-```
-
-하나라도 다르거나 없으면 그 파일 이름이 나오고 종료 코드 1로 끝난다. 그 파일을 다시 옮긴다. `train.sbatch`도 학습 전에 이 확인을 하고, 실패하면 종료 코드 2로 끝난다.
-
-## 4. 서버 설정 (`site.env`)
+## 3. 서버 설정 (`site.env`)
 
 ```bash
 cp gpu_train/site.env.example gpu_train/site.env
@@ -101,7 +83,7 @@ cp gpu_train/site.env.example gpu_train/site.env
   SBATCH_DRY_RUN=1 bash gpu_train/submit.sh smoke
   ```
 
-## 5. 환경 구성
+## 4. 환경 구성
 
 로그인 노드에서 실행한다. pytest는 입력 파일 없이도 돈다.
 
@@ -110,13 +92,70 @@ bash gpu_train/setup_env.sh
 ```
 
 1. 환경 `CONDA_ENV`가 없으면 `environment.yml`로 만든다 (conda-forge, Python 3.13). 있으면 만들지 않는다
-2. pip로 torch를 설치하고(`TORCH_INDEX_URL`이 있으면 그 주소에서), 이어서 `requirements.txt`를 설치한다
+2. pip로 torch를 설치하고(`TORCH_INDEX_URL`이 있으면 그 주소에서), 이어서 `requirements.txt`를 설치한다. 입력 받기에 쓰는 `huggingface_hub`도 여기서 설치된다
 3. 버전을 출력하고 `pytest -q` 전체를 돌린다
 4. `pip freeze`를 `runs/gpu/meta/env_{시각}.txt`에 남긴다
 
 - 끝에 `N passed`, 종료 코드 0이면 된다.
 - 로그인 노드에 GPU가 없으면 "GPU 안 보임 (로그인 노드면 정상)"이 나온다. GPU 인식은 smoke 작업이 확인한다.
 - 다시 실행해도 된다. 환경은 그대로 두고 설치와 확인만 다시 한다.
+
+## 5. 입력 받기
+
+베이스 가중치와 전처리 데이터·q 캐시는 git에 없다. 13개 파일, 660,418,156 bytes(약 630 MiB)다. 목록과 SHA-256은 `gpu_train/inputs.sha256`에 있다.
+
+### Hugging Face에서 받기 (기본)
+
+입력은 Hugging Face Hub의 **비공개** 저장소에 있다. `gpu_train/inputs.hf`에 저장소 ID(`HF_REPO`)와 받을 커밋 해시(`HF_REVISION`)가 고정돼 있다.
+
+**토큰** (처음 한 번):
+
+1. huggingface.co → Settings → Access Tokens → **Fine-grained** 토큰을 만든다
+2. 권한은 그 저장소(`HF_REPO`)의 **Read access to contents** 하나만 준다. 쓰기 권한은 주지 않는다
+3. 서버에서 로그인한다. 토큰은 `~/.cache/huggingface/token`에 저장되고, 저장소에는 남지 않는다
+
+```bash
+conda activate chess-train      # 4절의 환경. hf 명령이 여기 들어 있다
+hf auth login                   # 토큰을 붙여 넣는다. git 자격 증명 저장은 묻지 않으면 건너뛴다
+hf auth whoami                  # 계정 이름이 나오면 된다
+```
+
+`hf auth login` 대신 `HF_TOKEN` 환경변수를 써도 된다. 이때도 토큰을 `site.env`나 저장소 안 파일에 적지 않는다.
+
+**받기**:
+
+```bash
+bash gpu_train/fetch_inputs.sh
+```
+
+1. `inputs.hf`의 리비전에서 `inputs.sha256`을 먼저 받아 git의 `inputs.sha256`과 비교한다. 다르면 멈춘다
+2. 매니페스트에 적힌 파일만 저장소 루트의 같은 경로로 받는다. 이미 받은 같은 파일은 다시 받지 않는다
+3. `check_inputs.sh`를 돌린다. 끝에 `입력 확인 통과: 13개`가 나와야 한다
+
+- 받는 중 생기는 `.cache/huggingface/`(저장소 루트)는 git 제외다. 다음 받기에서 같은 파일인지 판단하는 데 쓰이므로 지우지 않는다.
+- **입력이 갱신되면**: 로컬에서 새로 올리고 `inputs.hf`를 커밋한다 (11절, 처음 올리기도 같다). 서버에서는 학습이 돌고 있지 않을 때 `git pull` 후 `fetch_inputs.sh`를 다시 실행한다.
+
+### 직접 전송 (대안)
+
+로컬에서 서버로 ssh가 되면 Hugging Face 없이 옮길 수 있다. ssh가 되는 머신의 저장소 루트에서 실행한다 (로컬 개발 컨테이너에는 `rsync`·`scp`·`ssh`가 없다).
+
+```bash
+# -R은 상대 경로를 그대로 유지한다
+rsync -avR --progress \
+  base_model/136M.pt \
+  data/processed/{tal,karpov,smyslov}/{train.jsonl,val.jsonl,stats.json,base_q_136M.npz} \
+  사용자@서버:/서버의/저장소/경로/
+```
+
+rsync가 없으면 같은 상대 경로로 `scp`한다. 옮긴 뒤 서버에서 `bash gpu_train/check_inputs.sh`로 확인한다.
+
+### 확인
+
+```bash
+bash gpu_train/check_inputs.sh      # "입력 확인 통과: 13개"가 나와야 한다
+```
+
+하나라도 다르거나 없으면 그 파일 이름이 나오고 종료 코드 1로 끝난다. `fetch_inputs.sh`를 다시 실행하거나 그 파일을 다시 옮긴다. `train.sbatch`도 학습 전에 이 확인을 하고, 실패하면 종료 코드 2로 끝난다.
 
 ## 6. smoke (본 학습 전에 반드시)
 
@@ -151,7 +190,7 @@ cat runs/gpu/logs/smoke_*.out         # 끝나면
 | strength | 0.005139145441353321 |
 
 - top1·top3는 정확히 같아야 한다. 나머지는 GPU·torch 버전에 따라 끝자리가 다를 수 있다. 소수 넷째 자리까지 같으면 정상이다.
-- 다르면 입력 파일(3절)이나 코드 커밋(2절)이 다르다. 본 학습을 시작하지 않는다.
+- 다르면 입력 파일(5절)이나 코드 커밋(2절)이 다르다. 본 학습을 시작하지 않는다.
 - 로컬 smoke 어댑터의 SHA-256은 `806fc7ff6923b7a5fa590252100898af16c731d133e3be2b8df2a0a7b1fe633f`다. 다른 GPU에서는 달라도 된다. 참고로만 적는다.
 
 smoke를 다시 돌리려면 `runs/gpu/smoke/`를 지운다. `DONE`이 있으면 작업이 바로 끝난다.
@@ -231,7 +270,11 @@ mkdir -p runs/gpu/collect/R1 && tar -xzf runs/gpu/collect/R1_*.tar.gz -C runs/gp
 
 | 증상 | 원인과 조치 |
 |---|---|
-| `입력 확인 실패`, 작업 종료 코드 2 | 입력 파일이 다르거나 없다. 나온 파일을 다시 옮기고 `check_inputs.sh`로 확인한다 (3절) |
+| `입력 확인 실패`, 작업 종료 코드 2 | 입력 파일이 다르거나 없다. `fetch_inputs.sh`를 다시 실행하거나 그 파일을 다시 옮긴 뒤 `check_inputs.sh`로 확인한다 (5절) |
+| `Hugging Face 토큰이 없다` | 서버에서 `hf auth login`을 하지 않았다 (5절) |
+| `401`, `403`, `Repository Not Found` (받기) | 토큰이 그 저장소를 읽을 수 없다. 비공개 저장소는 권한이 없어도 "없다"로 나온다. fine-grained 토큰의 저장소 권한과 `inputs.hf`의 `HF_REPO`를 확인한다 |
+| `Revision Not Found` | `inputs.hf`의 `HF_REVISION`이 저장소에 없다. 로컬에서 올린 뒤 `inputs.hf`를 커밋·push했는지, 서버에서 `git pull`했는지 본다 |
+| `…의 gpu_train/inputs.sha256가 git의 …와 다르다` | `inputs.hf`와 `inputs.sha256`이 서로 다른 커밋에서 왔다. 로컬에서 `upload_inputs.sh`를 다시 실행하고 두 파일을 함께 커밋한다 |
 | `setup_env.sh`에서 `THESE PACKAGES DO NOT MATCH THE HASHES` | 내려받는 중 파일이 손상됐다 (로컬 시험에서 한 번 났다). 그대로 다시 실행한다. 되풀이되면 프록시·미러 설정을 확인한다 |
 | `conda 환경 chess-train 활성화 실패` | `CONDA_SH` 경로가 틀렸거나 환경을 아직 만들지 않았다. `setup_env.sh`를 먼저 실행한다 |
 | `site.env의 REPO_DIR(…)가 이 저장소(…)와 다르다` | `REPO_DIR`를 `pwd -P` 값으로 고친다 |
@@ -246,7 +289,7 @@ mkdir -p runs/gpu/collect/R1 && tar -xzf runs/gpu/collect/R1_*.tar.gz -C runs/gp
 | `CUDA error: … unspecified launch failure` 등 학습 도중 오류 | 자동으로 다시 시도한다 (7절). 되풀이되면 작업 출력의 오류 전문을 결과 기록에 남긴다 |
 | 처리량이 갑자기 수십 배 느려짐 | GPU 메모리가 넘친 상태일 수 있다. `gpu_{ID}.log`의 메모리를 본다 (학습 가이드 6절) |
 
-## 11. R3~R10 추가
+## 11. R3~R10 추가와 입력 갱신
 
 α 값(a₁, a₂)은 스타일 특성 이슈에서 정한다 (기준 문서 6.2절). 정해지면 로컬에서 다음을 하고 `devel`에 올린 뒤, 서버에서 `git pull`해서 제출한다.
 
@@ -256,7 +299,10 @@ mkdir -p runs/gpu/collect/R1 && tar -xzf runs/gpu/collect/R1_*.tar.gz -C runs/gp
 4. 서버에서 `python -m gpu_train.runs list`로 "가능"이 됐는지 확인하고 제출한다.
 
 - **실행 중인 학습이 있을 때는 `git pull`하지 않는다** (2절). 이어 가는 작업이 새 코드로 돌게 된다.
-- 입력 파일이 바뀌면(예: 특성 캐시 추가) 로컬에서 다음을 하고 커밋한다.
+- 입력 파일이 바뀌면(예: 특성 캐시 추가) 다음 순서로 갱신한다. 1~5는 로컬, 6은 서버에서 한다. 처음 올릴 때도 3~4를 한다.
   1. `make_manifest.sh` 안의 파일 목록을 고친다
   2. `bash gpu_train/make_manifest.sh`로 `inputs.sha256`을 다시 만든다
-  3. 3절의 rsync 목록도 고친다
+  3. `bash gpu_train/upload_inputs.sh 저장소ID`로 새로 올린다. `inputs.hf`의 리비전과 태그가 바뀐다
+  4. `inputs.sha256`과 `inputs.hf`를 함께 커밋하고 `devel`에 올린다
+  5. 5절 직접 전송의 rsync 목록도 고친다
+  6. 서버에서 학습이 돌고 있지 않을 때 `git pull` 후 `fetch_inputs.sh`

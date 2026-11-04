@@ -136,7 +136,7 @@ python -m src.play.server --host 0.0.0.0   # 개발 컨테이너·WSL2 안에서
 | 문서 | 내용 |
 |---|---|
 | [`mydocs/manual/training_guide.md`](mydocs/manual/training_guide.md) | 학습 실행 가이드 |
-| [`gpu_train/README.md`](gpu_train/README.md) | GPU 서버(Slurm + Miniconda) 학습 절차: 입력 옮기기, 환경, 제출, 이어서 학습, 결과 회수 (Task #10) |
+| [`gpu_train/README.md`](gpu_train/README.md) | GPU 서버(Slurm + Miniconda) 학습 절차: 환경, 입력 받기(Hugging Face 비공개 저장소), 제출, 이어서 학습, 결과 회수 (Task #10) |
 | [`mydocs/manual/play_app.md`](mydocs/manual/play_app.md) | 대국 앱 사용 가이드 |
 | [`mydocs/tech/adapters_136M_summary.md`](mydocs/tech/adapters_136M_summary.md) | 세 어댑터 종합: 지표, 곡선, 조건 차이, 교차 평가, 한계 |
 | [`mydocs/tech/evaluation_criteria.md`](mydocs/tech/evaluation_criteria.md) | 기풍 주입 평가 기준 (고정): 주장 A~D별 지표·판정, 종합 판정, 학습 설계 (Task #9) |

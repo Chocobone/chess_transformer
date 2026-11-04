@@ -14,6 +14,7 @@
 | 학습 재개 시 데이터 순서 결함 수정, 학습 기록 정정 | 완료 (Task #5) |
 | 세 어댑터 결과 종합, 교차 평가, 실행 가이드 갱신 | 완료 (Task #6) |
 | 모델과 직접 두어 보는 대국 앱 (확인용) | 완료 (Task #7) |
+| 기풍 주입 평가 기준 (주장 A~D별 지표·판정, 학습 설계) | 완료 (Task #9) |
 | 스타일 특성 벡터 f(s,a), 방향 벡터 w_p (제안서 4.1~4.2) | 예정 |
 | α 스윕, 지문 거리·혼동 행렬·대국 성적 평가 (제안서 6장) | 예정 |
 | 270M 베이스 학습 | 예정 |
@@ -154,6 +155,7 @@ python -m src.play.server --host 0.0.0.0   # 개발 컨테이너·WSL2 안에서
 | #5 | 학습 재개 데이터 순서 수정, 기록 정정 | [`task_m100_5_report.md`](mydocs/report/task_m100_5_report.md) |
 | #6 | 세 어댑터 결과 종합, 교차 평가, 가이드 갱신 | [`task_m100_6_report.md`](mydocs/report/task_m100_6_report.md) |
 | #7 | 모델과 사용자가 대국하는 체스 앱 (유저 확인용) | [`task_m100_7_report.md`](mydocs/report/task_m100_7_report.md) |
+| #9 | 기풍 주입 평가 기준 작성 (주장 A~D, 기준 고정) | [`task_m100_9_report.md`](mydocs/report/task_m100_9_report.md) |
 
 ## 알려진 한계
 

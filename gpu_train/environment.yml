@@ -1,0 +1,10 @@
+# GPU 서버 학습용 conda 환경. Python만 conda로 깔고, 나머지는 setup_env.sh가 pip로 설치한다.
+# torch를 서버 CUDA에 맞는 휠로 먼저 깔아야 해서 requirements.txt를 여기 넣지 않는다.
+# 환경 이름은 site.env의 CONDA_ENV로 정한다 (setup_env.sh가 -n으로 넘긴다).
+name: chess-train
+channels:
+  - conda-forge
+  - nodefaults   # defaults 채널(이용 약관 동의 필요)을 쓰지 않는다
+dependencies:
+  - python=3.13
+  - pip

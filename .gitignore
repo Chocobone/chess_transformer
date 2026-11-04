@@ -13,3 +13,6 @@ base_model/*/
 base_model/*.zip
 base_model/*.pt
 base_model/*.npz
+
+# GPU 서버 설정 (서버마다 다르다. gpu_train/site.env.example을 복사해 채운다)
+gpu_train/site.env

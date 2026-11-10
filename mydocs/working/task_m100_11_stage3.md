@@ -62,4 +62,4 @@ tar -czf runs/gpu/collect/eval_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/eval runs/
 
 ## 커밋
 
-(승인 후 기록)
+`a7bdcfa` Task #11 단계3: 배포와 서버 실행 안내 보고서

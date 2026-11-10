@@ -72,3 +72,78 @@ def test_matches_existing_adapter_config(run_id):
     differing = {key for key in old if key not in RUN_SPECIFIC and old[key] != new.get(key)}
     assert differing == set()
     assert (old["seed"], new["seed"]) == (0, 1)
+
+
+SEED0 = {"R1s0": "R1", "R2s0": "R2", "R8s0": "R8"}
+
+
+@pytest.mark.parametrize("run_id", SEED0)
+def test_seed0_runs_differ_from_pair_only_in_seed(run_id):
+    """잡음 바닥 쌍: 대응하는 R와 seed·출력 폴더만 다르다 (Task #11)."""
+    seed0, pair = vars(parse(run_id)), vars(parse(SEED0[run_id]))
+    changed = {key for key in pair if seed0[key] != pair[key]}
+    assert changed == {"seed", "out"}
+    assert (seed0["seed"], pair["seed"]) == (0, 1)
+    assert seed0["out"] == f"runs/gpu/{run_id}"
+
+
+def test_seed0_runs_are_listed_as_ready(capsys):
+    assert runs.main(["list"]) == 0
+    lines = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()[1:]}
+    for run_id in SEED0:
+        assert lines[run_id].split()[5] == "가능"
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def run_script(*args, env=None):
+    import os
+    import subprocess
+    return subprocess.run(["bash", *args], cwd=ROOT, capture_output=True, text=True,
+                          env={**os.environ, **(env or {})})
+
+
+@pytest.mark.parametrize("script", ["gpu_train/eval.sbatch", "gpu_train/submit_eval.sh"])
+def test_eval_scripts_parse(script):
+    assert run_script("-n", script).returncode == 0
+
+
+@pytest.fixture
+def site_env(tmp_path):
+    path = tmp_path / "site.env"
+    path.write_text("REPO_DIR=/srv/repo\nSBATCH_PARTITION=gpu\nSBATCH_GRES=gpu:1\nSBATCH_TIME=02:00:00\n"
+                    "SBATCH_CPUS=4\nSBATCH_MEM=32G\nSBATCH_ACCOUNT=\nSBATCH_EXTRA=\n", encoding="utf-8")
+    return path
+
+
+def fake_run(folder: Path) -> Path:
+    folder.mkdir(parents=True)
+    for name in ("config.json", "log.jsonl", "adapter.pt"):
+        (folder / name).write_text("{}", encoding="utf-8")
+    return folder
+
+
+def test_submit_eval_dry_run(site_env, tmp_path):
+    first, second = fake_run(tmp_path / "a" / "R1"), fake_run(tmp_path / "a" / "R2")
+    result = run_script("gpu_train/submit_eval.sh", str(first), str(second),
+                        env={"SITE_ENV": str(site_env), "SBATCH_DRY_RUN": "1"})
+    assert result.returncode == 0, result.stderr
+    command = result.stdout.split()
+    assert command[:2] == ["sbatch", "--parsable"]
+    for option in ("--job-name=eval", "--output=runs/gpu/logs/%x_%j.out", "--chdir=/srv/repo", "--partition=gpu",
+                   "--gres=gpu:1", "--time=02:00:00", "--cpus-per-task=4", "--mem=32G"):
+        assert option in command
+    assert not any(option.startswith(("--account", "--dependency")) for option in command)
+    assert command[-3:] == ["gpu_train/eval.sbatch", str(first), str(second)]
+
+
+def test_submit_eval_rejects_incomplete_or_clashing_folders(site_env, tmp_path):
+    env = {"SITE_ENV": str(site_env), "SBATCH_DRY_RUN": "1"}
+    broken = fake_run(tmp_path / "broken")
+    (broken / "adapter.pt").unlink()
+    result = run_script("gpu_train/submit_eval.sh", str(broken), env=env)
+    assert result.returncode == 1 and "adapter.pt가 없다" in result.stderr
+    first, second = fake_run(tmp_path / "x" / "R1"), fake_run(tmp_path / "y" / "R1")
+    result = run_script("gpu_train/submit_eval.sh", str(first), str(second), env=env)
+    assert result.returncode == 1 and "겹친다" in result.stderr

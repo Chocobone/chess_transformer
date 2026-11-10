@@ -1,4 +1,4 @@
-"""학습 정의 R1~R10과 smoke. 학습 ID를 `src.train.train` 명령으로 바꾼다.
+"""학습 정의 R1~R10, seed 0 대조군 R1s0·R2s0·R8s0과 smoke. 학습 ID를 `src.train.train` 명령으로 바꾼다.
 
 설정은 기준 문서 `mydocs/tech/evaluation_criteria.md` 8.1절을 따른다.
 작업 스크립트(`train.sbatch`)는 ID만 받고 인자는 모두 여기서 만든다.
@@ -48,6 +48,10 @@ RUNS: dict[str, Run] = {run.run_id: run for run in (
     Run("R1", "tal", 0.0, role="α = 0. 잡음 바닥, D 기준선"),
     Run("R2", "smyslov", 0.0, role="α = 0. 잡음 바닥, D 기준선"),
     Run("R8", "karpov", 0.0, role="α = 0. 잡음 바닥, D 기준선"),
+    # 잡음 바닥 쌍의 다른 쪽. 대응하는 R와 seed만 다르다 (Task #11)
+    Run("R1s0", "tal", 0.0, seed=0, role="α = 0, seed 0. R1과 잡음 바닥 쌍"),
+    Run("R2s0", "smyslov", 0.0, seed=0, role="α = 0, seed 0. R2와 잡음 바닥 쌍"),
+    Run("R8s0", "karpov", 0.0, seed=0, role="α = 0, seed 0. R8과 잡음 바닥 쌍"),
     Run("R3", "tal", None, role="α = a₁"),
     Run("R4", "tal", None, role="α = a₂ (주 결과)"),
     Run("R5", "smyslov", None, role="α = a₁"),

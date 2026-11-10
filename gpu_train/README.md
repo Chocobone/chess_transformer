@@ -14,13 +14,14 @@ upload_inputs.sh ─→ Hugging Face (비공개)
                                     submit.sh smoke  ─────────────→      train.sbatch smoke
                                     submit.sh R1 / R2 / R8  ──────→      train.sbatch R1 …
                                     collect.sh R1
+                                    submit_eval.sh runs/gpu/R1 … ─→      eval.sbatch (재평가)
 결과 묶음 scp  ←──────────────
 mydocs/test_result/에 정리
 ```
 
 | 파일 | 하는 일 |
 |---|---|
-| `runs.py` | 학습 ID(R1~R10, smoke)별 설정. `python -m gpu_train.runs list`로 목록을 본다 |
+| `runs.py` | 학습 ID(R1~R10, seed 0 대조군 R1s0·R2s0·R8s0, smoke)별 설정. `python -m gpu_train.runs list`로 목록을 본다 |
 | `inputs.sha256`, `check_inputs.sh` | 입력 13개의 SHA-256과 확인 스크립트 |
 | `make_manifest.sh` | `inputs.sha256`을 다시 만든다 (입력을 바꿨을 때만, 로컬에서) |
 | `inputs.hf` | 입력을 받을 Hugging Face 저장소 ID와 고정 커밋 해시 |
@@ -31,6 +32,8 @@ mydocs/test_result/에 정리
 | `submit.sh` | 학습 하나를 sbatch로 제출한다 |
 | `train.sbatch` | 작업 본문: 입력 확인, 기록, 학습, 재시도, 다음 작업 이어서 제출 |
 | `collect.sh` | 결과를 tar.gz 하나로 묶는다 |
+| `eval_adapter.py` | 학습 폴더 하나의 어댑터로 val 전체를 다시 재서 `log.jsonl`의 마지막 eval·baseline과 비교한다 (9절 재평가) |
+| `submit_eval.sh`, `eval.sbatch` | 학습 폴더 여러 개의 재평가를 sbatch 작업 하나로 제출한다 |
 
 결과는 모두 `runs/gpu/` 아래에 쌓인다 (git 제외).
 
@@ -42,6 +45,7 @@ mydocs/test_result/에 정리
 | `runs/gpu/meta/{ID}_{작업ID}.txt` | 작업 기록: 호스트, 커밋, GPU, torch, 명령, 시도별 결과 |
 | `runs/gpu/meta/env_{시각}.txt` | `setup_env.sh`가 남긴 `pip freeze` |
 | `runs/gpu/collect/` | `collect.sh`가 만든 묶음 |
+| `runs/gpu/eval/` | 재평가 결과: `{폴더 이름}.json`·`.txt`, 기록 `meta_{작업ID}.txt`, GPU 로그 `gpu_{작업ID}.log` |
 
 ## 2. 저장소 받기
 
@@ -197,17 +201,21 @@ smoke를 다시 돌리려면 `runs/gpu/smoke/`를 지운다. `DONE`이 있으면
 
 ## 7. 본 학습
 
-지금 실행할 수 있는 것은 R1(탈)·R2(스미슬로프)·R8(카르포프), α = 0, seed 1이다. R3~R7, R9, R10은 α가 정해지기 전에는 제출을 거부한다 (11절).
+지금 실행할 수 있는 것은 R1(탈)·R2(스미슬로프)·R8(카르포프), α = 0, seed 1과, 그 seed 0 대조군 R1s0·R2s0·R8s0이다. R3~R7, R9, R10은 α가 정해지기 전에는 제출을 거부한다 (11절).
+
+- R1s0·R2s0·R8s0은 대응하는 R1·R2·R8과 seed(0)만 다르다. 잡음 바닥(기준 문서 4.3절 B3) 쌍으로 쓴다 (Task #11). 기존 seed 0 어댑터 `runs/{player}_136M/`은 Task #5 수정 전 코드로 로컬에서 학습한 것이라 쓰지 않는다
 
 ```bash
 python -m gpu_train.runs list        # ID, 기사, α, λ, seed, 실행 가능 여부
 bash gpu_train/submit.sh R1
 bash gpu_train/submit.sh R2
 bash gpu_train/submit.sh R8
+bash gpu_train/submit.sh R1s0         # seed 0 대조군. R2s0, R8s0도 같은 방식
 ```
 
 - 세 학습은 출력 폴더와 데이터가 서로 달라 동시에 제출해도 된다. 각각 GPU 1개를 쓴다. GPU 할당이 빠듯하면 하나씩 제출한다.
 - 학습 1회는 로컬 RTX 4070 Ti 기준 약 3.1~3.6시간이다 (7,455~9,039 갱신, 평가 1회 약 3분 × 8~10회). 서버 GPU에 따라 다르다. smoke의 `positions_per_sec`로 짐작한다 (로컬은 약 25).
+  - 서버 실측 (RTX A2000 6 GB, Task #11): 탈 7시간 56분, 스미슬로프 9시간 19분, 카르포프 10시간 4분. 처리량 약 10.5~10.8국면/초, 평가 1회 12~16분, GPU 전체 최대 5,020 MiB. 결과는 `mydocs/test_result/task_m100_11_test.md`
 - **`SBATCH_TIME`이 학습 시간보다 짧아도 된다.** 작업은 시작할 때 같은 학습의 다음 작업을 `--dependency=afterany`로 예약해 둔다. 시간 제한으로 끊기면 다음 작업이 체크포인트에서 이어 간다.
   - 체크포인트는 200 갱신(로컬 약 4~5분)마다 저장된다. 끊길 때마다 최대 그만큼과 시작 시간을 잃는다.
   - 학습이 끝나면 예약해 둔 다음 작업을 취소한다.
@@ -265,6 +273,41 @@ mkdir -p runs/gpu/collect/R1 && tar -xzf runs/gpu/collect/R1_*.tar.gz -C runs/gp
 - `adapter.pt` 크기와 SHA-256
 - 이어서 제출한 작업 목록 (`sacct --name=R1` 출력)
 - 오류가 났다면 오류 메시지 전문
+
+### 재평가 (`submit_eval.sh`)
+
+받은 어댑터가 학습 끝의 가중치 그대로인지 확인한다. 학습 폴더마다 val 전체를 다시 재서, 그 폴더 `log.jsonl`의 마지막 eval 줄과 baseline 줄과 비교한다. 평가 조건(데이터, 손실 설정, 묶음 크기, float32)은 폴더의 `config.json`에서 읽어 학습 때와 같게 맞춘다.
+
+```bash
+SBATCH_DRY_RUN=1 bash gpu_train/submit_eval.sh runs/gpu/R1 runs/gpu/R2 runs/gpu/R8   # 명령만 확인
+bash gpu_train/submit_eval.sh runs/gpu/R1 runs/gpu/R2 runs/gpu/R8
+squeue -u $USER                                   # 작업 이름 eval
+tail -f runs/gpu/logs/eval_<작업ID>.out
+```
+
+- 폴더를 차례로 평가한다. 서버(RTX A2000)에서 폴더 하나에 12~16분, 셋에 약 45분이다. `SBATCH_TIME`이 이보다 짧으면 끊긴다. 재평가는 이어서 제출하지 않는다.
+- 학습과 GPU를 따로 받으므로 학습 중에 제출해도 된다.
+- 판정은 서버 smoke(6절)와 같다. **top1·top3는 정확히 같고, 나머지 지표는 차이가 5 × 10⁻⁵ 미만**이어야 통과다.
+- 하나가 실패해도 나머지는 평가한다. 작업 종료 코드는 모두 통과면 0, 하나라도 실패나 오류면 1, 입력 확인 실패면 2다.
+- 결과는 `runs/gpu/eval/`에 쌓인다.
+
+| 파일 | 내용 |
+|---|---|
+| `{폴더 이름}.json` | 지표별 다시 잰 값, 기록값, 차이, 판정. `adapter.pt` SHA-256, 장치, torch 버전, 걸린 시간 |
+| `{폴더 이름}.txt` | 사람이 읽는 출력. 마지막 줄이 `판정: 통과` 또는 `판정: 실패` |
+| `meta_{작업ID}.txt` | 대상, 호스트, git HEAD와 미커밋 변경, GPU, torch, 폴더별 시작·끝, 마지막의 판정 표 |
+| `gpu_{작업ID}.log` | 60초마다 GPU 메모리·사용률·온도 |
+
+- 판정 표에서 `실패`는 값이 다르다는 뜻이다. `오류(종료 코드 N)`는 평가가 끝나지 않았다는 뜻이다(파일 없음, 입력 불일치 등). 해당 `.txt`에 원인이 있다.
+- 같은 폴더 이름(`runs/gpu/R1`과 `runs/R1` 등)은 결과 파일이 겹치므로 함께 제출할 수 없다.
+- 다시 돌리면 같은 이름의 결과 파일을 덮어쓴다. 기록 파일은 작업마다 따로 남는다.
+- 서버 밖(로컬)에서 직접 돌릴 수도 있다: `python -m gpu_train.eval_adapter runs/gpu/R1 --baseline --json 결과.json`. 입력(`data/processed/`)과 베이스가 있어야 한다.
+
+로컬로 가져올 때는 묶어서 옮긴다:
+
+```bash
+tar -czf runs/gpu/collect/eval_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/eval runs/gpu/logs/eval_*.out
+```
 
 ## 10. 문제 해결
 

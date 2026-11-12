@@ -15,6 +15,7 @@ upload_inputs.sh ─→ Hugging Face (비공개)
                                     submit.sh R1 / R2 / R8  ──────→      train.sbatch R1 …
                                     collect.sh R1
                                     submit_eval.sh runs/gpu/R1 … ─→      eval.sbatch (재평가)
+                                    submit_dump.sh runs/gpu/R1 … ─→      dump.sbatch (모델 출력 덤프)
 결과 묶음 scp  ←──────────────
 mydocs/test_result/에 정리
 ```
@@ -34,6 +35,7 @@ mydocs/test_result/에 정리
 | `collect.sh` | 결과를 tar.gz 하나로 묶는다 |
 | `eval_adapter.py` | 학습 폴더 하나의 어댑터로 val 전체를 다시 재서 `log.jsonl`의 마지막 eval·baseline과 비교한다 (9절 재평가) |
 | `submit_eval.sh`, `eval.sbatch` | 학습 폴더 여러 개의 재평가를 sbatch 작업 하나로 제출한다 |
+| `submit_dump.sh`, `dump.sbatch` | 학습 폴더 여러 개의 모델 출력 덤프(`src/eval/dump.py`)를 sbatch 작업 하나로 제출한다 (9절 덤프) |
 
 결과는 모두 `runs/gpu/` 아래에 쌓인다 (git 제외).
 
@@ -46,6 +48,7 @@ mydocs/test_result/에 정리
 | `runs/gpu/meta/env_{시각}.txt` | `setup_env.sh`가 남긴 `pip freeze` |
 | `runs/gpu/collect/` | `collect.sh`가 만든 묶음 |
 | `runs/gpu/eval/` | 재평가 결과: `{폴더 이름}.json`·`.txt`, 기록 `meta_{작업ID}.txt`, GPU 로그 `gpu_{작업ID}.log` |
+| `runs/gpu/dump/` | 모델 출력 덤프: `positions.npz`, `base.npz`, `{모델 ID}.npz`·`.json`·`.txt`, 기록 `meta_{작업ID}.txt`, GPU 로그 |
 
 ## 2. 저장소 받기
 
@@ -307,6 +310,43 @@ tail -f runs/gpu/logs/eval_<작업ID>.out
 
 ```bash
 tar -czf runs/gpu/collect/eval_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/eval runs/gpu/logs/eval_*.out
+```
+
+### 모델 출력 덤프 (`submit_dump.sh`)
+
+평가 기준 문서의 특성 없는 지표(A1~A3, B2·B3·B10, C3)를 계산하기 위한 모델 출력을 남긴다 (Task #12). 학습 폴더마다 세 기사 val 전체(S_val, 13,846국면)에서 합법수별 log π를 저장한다. 지표와 판정은 덤프를 로컬로 가져와 `python -m src.eval.judge`로 계산한다(GPU 불필요).
+
+**모든 모델을 같은 계산 노드에서 덤프한다.** 정책 거리(B2·B3)는 모델 사이의 작은 차이를 재므로, GPU 기종 차이가 섞이지 않게 한다. `site.env`의 `SBATCH_EXTRA`에 노드를 적는다:
+
+```bash
+# gpu_train/site.env
+SBATCH_EXTRA=--nodelist=moana-u1      # RTX A2000 (R1·R2·R8 학습과 같은 기종)
+```
+
+```bash
+SBATCH_DRY_RUN=1 bash gpu_train/submit_dump.sh runs/gpu/R1 runs/gpu/R2 runs/gpu/R8 runs/gpu/R1s0 runs/gpu/R2s0 runs/gpu/R8s0
+bash gpu_train/submit_dump.sh runs/gpu/R1 runs/gpu/R2 runs/gpu/R8 runs/gpu/R1s0 runs/gpu/R2s0 runs/gpu/R8s0
+squeue -u $USER                                   # 작업 이름 dump
+tail -f runs/gpu/logs/dump_<작업ID>.out
+```
+
+- 첫 폴더를 덤프할 때 `positions.npz`(국면 정보)와 `base.npz`(캐시의 베이스 q로 만든 정책, CPU)를 만든다
+- RTX A2000에서 모델 하나에 약 42분, 6개에 약 4.2시간이다. `SBATCH_TIME`은 5시간 이상으로 둔다. 끊기면 같은 명령으로 다시 낸다. 이미 덤프했고 대조를 통과한 모델은 건너뛴다
+- 모델마다 자기 기사 val의 7개 지표를 덤프 파일로 다시 계산해 `log.jsonl`의 마지막 eval·baseline과 대조한다. 규칙은 재평가와 같다
+- 판정 표: `통과`, `실패`(대조 값이 다름), `오류(종료 코드 N)`(덤프가 끝나지 않음). 작업 종료 코드는 모두 통과면 0, 아니면 1, 입력 확인 실패면 2다
+- 설정(temperature, 묶음 크기, 정밀도)이 다른 학습 폴더는 한 덤프 폴더에 넣을 수 없다
+
+| 파일 | 내용 |
+|---|---|
+| `positions.npz` | 기사, game_id, ply, 합법수 구간, 기사 수 번호, 베이스 기준 regret, 새 국면 여부, 설정 |
+| `base.npz`, `{모델 ID}.npz` | 합법수별 log π (모델 ID는 학습 폴더 이름) |
+| `{모델 ID}.json`·`.txt` | 학습 기록 대조, 1순위 동률 국면 수, 환경, `adapter.pt` SHA-256, 기사별 시간 |
+| `meta_{작업ID}.txt` | 대상, 호스트, git HEAD, GPU, torch, 폴더별 시작·끝, 판정 표 |
+
+로컬로 가져올 때:
+
+```bash
+tar -czf runs/gpu/collect/dump_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/dump runs/gpu/logs/dump_*.out
 ```
 
 ## 10. 문제 해결

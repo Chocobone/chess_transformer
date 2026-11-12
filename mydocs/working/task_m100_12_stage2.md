@@ -99,4 +99,4 @@ python -m src.eval.judge runs/gpu/dump --out runs/gpu/judge
 
 ## 커밋
 
-(커밋 후 기록)
+`31f709d` Task #12 단계2: 지표·부트스트랩·판정

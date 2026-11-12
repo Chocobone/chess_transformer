@@ -326,3 +326,30 @@ def test_submit_dump_rejects_incomplete_or_clashing_folders(site_env, tmp_path):
     first, second = fake_run(tmp_path / "x" / "R1"), fake_run(tmp_path / "y" / "R1")
     result = run_script("gpu_train/submit_dump.sh", str(first), str(second), env=env)
     assert result.returncode == 1 and "겹친다" in result.stderr
+
+
+# ── 덤프 → 판정 (소형 실제 파이프라인) ─────────────────────────
+
+
+def test_judge_runs_on_real_dump(workspace, runs, tmp_path):
+    """소형 학습 폴더로 6개 모델을 덤프하고 판정까지 돈다. seed 0 자리에는 같은 어댑터의 복사본을 둔다."""
+    from src.eval.judge import main as judge_main
+
+    root, data_root, base, *_ = workspace
+    smyslov = root / "runs" / "Sm"
+    if not smyslov.exists():
+        train(run_args(base, data_root / "smyslov", smyslov, "smyslov", seed=0))
+    folders = tmp_path / "runs"
+    for source, names in ((runs["Ta"], ("R1", "R1s0")), (runs["Ka"], ("R8", "R8s0")), (smyslov, ("R2", "R2s0"))):
+        for name in names:
+            shutil.copytree(source, folders / name)
+    out = tmp_path / "dump"
+    for name in ("R1", "R8", "R2", "R1s0", "R8s0", "R2s0"):
+        assert dump_model(folders / name, out, "cpu", num_workers=0, data_root=data_root)["pass"]
+    code = judge_main([str(out), "--out", str(tmp_path / "judge"), "--n-boot", "200", "--bundle-repeats", "5"])
+    assert code == 0
+    result = json.loads((tmp_path / "judge" / "results.json").read_text(encoding="utf-8"))
+    assert result["positions"] == int(load_positions(out)[0]["offsets"].size - 1)
+    for p in ("R1", "R8", "R2"):  # seed 0 자리가 복사본이라 잡음 바닥은 0이다
+        assert result["B2_B3"]["noise"][p]["value"] == 0.0
+    assert (tmp_path / "judge" / "report.md").read_text(encoding="utf-8").startswith("# 특성 없는 평가 결과")

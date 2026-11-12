@@ -152,7 +152,8 @@ def ensure_positions(out: Path, base: str, settings: dict, data_root: Path | Non
 
 
 def read_reference(run_dir: Path) -> dict:
-    records = [json.loads(line) for line in open(Path(run_dir) / "log.jsonl", encoding="utf-8") if line.strip()]
+    lines = (Path(run_dir) / "log.jsonl").read_text(encoding="utf-8").splitlines()
+    records = [json.loads(line) for line in lines if line.strip()]
     evals = [r for r in records if r["type"] == "eval"]
     baselines = [r for r in records if r["type"] == "baseline"]
     if not evals or not baselines:

@@ -51,3 +51,7 @@ tar -czf runs/gpu/collect/dump_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/dump runs/
 ## 다음 단계
 
 4단계: 덤프 회수와 검증, 컨테이너에서 `src.eval.judge` 실행.
+
+## 커밋
+
+`2ea924d` Task #12 단계3: README 덤프 절

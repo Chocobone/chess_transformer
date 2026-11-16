@@ -16,6 +16,8 @@ upload_inputs.sh ─→ Hugging Face (비공개)
                                     collect.sh R1
                                     submit_eval.sh runs/gpu/R1 … ─→      eval.sbatch (재평가)
                                     submit_dump.sh runs/gpu/R1 … ─→      dump.sbatch (모델 출력 덤프)
+                                    submit_match.sh 이름:… ───────→      match.sbatch (대국)
+                                    submit_quality.sh base R1 … ──→      quality.sbatch (C4 탐색, CPU)
 결과 묶음 scp  ←──────────────
 mydocs/test_result/에 정리
 ```
@@ -36,6 +38,9 @@ mydocs/test_result/에 정리
 | `eval_adapter.py` | 학습 폴더 하나의 어댑터로 val 전체를 다시 재서 `log.jsonl`의 마지막 eval·baseline과 비교한다 (9절 재평가) |
 | `submit_eval.sh`, `eval.sbatch` | 학습 폴더 여러 개의 재평가를 sbatch 작업 하나로 제출한다 |
 | `submit_dump.sh`, `dump.sbatch` | 학습 폴더 여러 개의 모델 출력 덤프(`src/eval/dump.py`)를 sbatch 작업 하나로 제출한다 (9절 덤프) |
+| `install_stockfish.sh` | Stockfish 19 공식 바이너리를 SHA-256 확인 후 `runs/tools/stockfish/`에 설치한다 (`setup_env.sh`가 부른다) |
+| `submit_match.sh`, `match.sbatch` | 짝 대국 묶음 여러 개(`src/match/play.py`)를 sbatch 작업 하나로 제출한다 (9절 대국) |
+| `submit_quality.sh`, `quality.sbatch` | C4 Stockfish 기준 수 품질 탐색(`src/match/quality.py`)을 CPU 작업으로 제출한다 (9절 C4) |
 
 결과는 모두 `runs/gpu/` 아래에 쌓인다 (git 제외).
 
@@ -49,6 +54,9 @@ mydocs/test_result/에 정리
 | `runs/gpu/collect/` | `collect.sh`가 만든 묶음 |
 | `runs/gpu/eval/` | 재평가 결과: `{폴더 이름}.json`·`.txt`, 기록 `meta_{작업ID}.txt`, GPU 로그 `gpu_{작업ID}.log` |
 | `runs/gpu/dump/` | 모델 출력 덤프: `positions.npz`, `base.npz`, `{모델 ID}.npz`·`.json`·`.txt`, 기록 `meta_{작업ID}.txt`, GPU 로그 |
+| `runs/gpu/match/{이름}/` | 대국: `games.pgn`, `index.jsonl`, `config.json`, `runs.jsonl`. 같은 폴더에 `{이름}.txt`(출력), `meta_{작업ID}.txt`, GPU 로그 |
+| `runs/gpu/quality/` | C4: `best.jsonl`·`moves.jsonl`(탐색 캐시), `{모델 ID}.npz`, `quality.json`, `config.json`, `meta_{작업ID}.txt` |
+| `runs/tools/` | Stockfish 실행 파일 (`install_stockfish.sh`), 오프닝 책 zip (로컬 선별용) |
 
 ## 2. 저장소 받기
 
@@ -347,6 +355,70 @@ tail -f runs/gpu/logs/dump_<작업ID>.out
 
 ```bash
 tar -czf runs/gpu/collect/dump_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/dump runs/gpu/logs/dump_*.out
+```
+
+### 대국 (`submit_match.sh`)
+
+평가 기준 문서 5절(주장 C 기력)의 C1(어댑터 대 베이스)·C2(모델 대 Stockfish) 짝 대국을 둔다 (Task #13). 오프닝 200개(`src/match/openings_200.json`)마다 색을 바꿔 2국을 둔다. 수는 π(temperature 0.02)에서 샘플링하고, Stockfish는 Stockfish 19, 1스레드, 노드 수 고정이다.
+
+**Stockfish 설치 확인** (로그인 노드, 한 번):
+
+```bash
+bash gpu_train/install_stockfish.sh     # setup_env.sh를 다시 돌려도 된다
+```
+
+출력의 `id name Stockfish 19`, 실행 파일 SHA-256 `0f83d24c…4c12da19`, `bench: Nodes searched : 2497913`을 확인한다. bench 값이 다르면 탐색이 로컬과 다르므로 진행하지 않고 알린다.
+
+**묶음 표기** `이름:모델:상대:노드수:오프닝` (상대가 `base`이면 노드수는 `-`). 결과는 `runs/gpu/match/{이름}/`에 쌓이고, 끝난 대국은 건너뛰므로 끊기면 같은 명령으로 다시 낸다. 같은 이름에 다른 설정을 주면 거부한다.
+
+```bash
+# site.env: 덤프와 같은 노드로 고정 (SBATCH_EXTRA=--nodelist=moana-u1), GPU 1개
+SBATCH_DRY_RUN=1 bash gpu_train/submit_match.sh cal1_n100:base:sf:100:0-9
+squeue -u $USER                                   # 작업 이름 match
+tail -f runs/gpu/logs/match_<작업ID>.out
+```
+
+- Stockfish 프로세스 수는 할당 CPU − 1이다. CPU는 `MATCH_CPUS=8 bash gpu_train/submit_match.sh …`처럼 늘릴 수 있다 (없으면 `SBATCH_CPUS`)
+- 동시 대국 수는 64가 기본이다 (`MATCH_CONCURRENT`)
+- 작업 기록 `runs/gpu/match/meta_{작업ID}.txt`에 GPU, CPU, Stockfish 버전·SHA-256·명령어 집합·bench가 남는다
+
+**순서** (평가 기준 문서 5.4절, Task #13 구현 계획서 해석 6):
+
+| 순서 | 내용 | 명령 |
+|---|---|---|
+| 1 예비 보정 | 베이스 대 SF, 노드 수 5개 × 20국 (오프닝 0~9) | 아래 |
+| 2 본 보정 | 예비 결과로 정한 노드 수 3개 × 100국 (오프닝 0~49) | 회수 뒤 안내 |
+| 3 기준선 | C1 `R1`·`R8`·`R2` 대 베이스, C2 `base`·`R1`·`R8`·`R2` 대 SF (각 400국) | 기준 문서 정정 뒤 안내 |
+
+```bash
+# 1 예비 보정
+bash gpu_train/submit_match.sh cal1_n100:base:sf:100:0-9 cal1_n300:base:sf:300:0-9 cal1_n1000:base:sf:1000:0-9   cal1_n3000:base:sf:3000:0-9 cal1_n10000:base:sf:10000:0-9
+```
+
+로컬로 가져올 때:
+
+```bash
+tar -czf runs/gpu/collect/match_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/match runs/gpu/logs/match_*.out
+```
+
+### C4 수 품질 (`submit_quality.sh`)
+
+S_val 13,846국면에서 Stockfish 최선수와 모델 1순위 수를 깊이 18로 평가한다 (Task #13, 평가 기준 문서 5.4절 C4). 모델 1순위 수는 덤프(`runs/gpu/dump/`)에서, FEN은 `data/processed/`의 val 기록에서 읽는다. GPU를 쓰지 않는다.
+
+```bash
+SBATCH_DRY_RUN=1 bash gpu_train/submit_quality.sh base R1 R8 R2
+bash gpu_train/submit_quality.sh base R1 R8 R2
+tail -f runs/gpu/logs/quality_<작업ID>.out
+```
+
+- 기본 CPU 16개(`QUALITY_CPUS`), 메모리 16G(`QUALITY_MEM`)다. 파티션이 GPU 요청을 요구하면 `QUALITY_GRES=gpu:1`을 붙인다
+- 로컬 측정(1스레드)으로 깊이 18 탐색은 평균 0.53초다. 약 3만~4만 회이므로 16개면 1시간 안팎으로 본다
+- 탐색 결과를 `best.jsonl`·`moves.jsonl`에 캐시한다. 끊기면 같은 명령으로 다시 내고, 모델을 더하면 새 수만 탐색한다
+
+로컬로 가져올 때:
+
+```bash
+tar -czf runs/gpu/collect/quality_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/quality runs/gpu/logs/quality_*.out
 ```
 
 ## 10. 문제 해결

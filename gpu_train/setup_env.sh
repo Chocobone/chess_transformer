@@ -29,6 +29,9 @@ fi
 echo "== requirements.txt 설치"
 python -m pip install -r requirements.txt
 
+echo "== Stockfish 설치 (대국·C4 평가, Task #13)"
+bash gpu_train/install_stockfish.sh
+
 echo "== 확인"
 python -c "import sys, torch, chess; print('python', sys.version.split()[0], '| torch', torch.__version__, '| CUDA', torch.version.cuda, '| chess', chess.__version__)"
 # 로그인 노드에는 GPU가 없을 수 있다. GPU 인식은 smoke 작업이 확인한다.

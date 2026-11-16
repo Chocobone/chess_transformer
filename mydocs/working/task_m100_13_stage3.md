@@ -68,4 +68,4 @@ CLI는 `python -m src.eval.games judge …`와 `python -m src.eval.games calibra
 
 ## 커밋
 
-(승인 뒤 기록)
+`b82137b` Task #13 단계3: C4 수 품질 탐색과 C1·C2·C4 집계·판정

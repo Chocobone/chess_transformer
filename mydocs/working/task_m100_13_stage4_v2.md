@@ -92,4 +92,4 @@ bash gpu_train/submit_match.sh cal1_n100:base:sf:100:0-9 cal1_n300:base:sf:300:0
 
 ## 커밋
 
-(승인 뒤 기록)
+`9fbd525` Task #13 단계4 보완: Stockfish 19 정적 빌드

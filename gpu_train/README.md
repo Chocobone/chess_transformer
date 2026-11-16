@@ -38,7 +38,8 @@ mydocs/test_result/에 정리
 | `eval_adapter.py` | 학습 폴더 하나의 어댑터로 val 전체를 다시 재서 `log.jsonl`의 마지막 eval·baseline과 비교한다 (9절 재평가) |
 | `submit_eval.sh`, `eval.sbatch` | 학습 폴더 여러 개의 재평가를 sbatch 작업 하나로 제출한다 |
 | `submit_dump.sh`, `dump.sbatch` | 학습 폴더 여러 개의 모델 출력 덤프(`src/eval/dump.py`)를 sbatch 작업 하나로 제출한다 (9절 덤프) |
-| `install_stockfish.sh` | Stockfish 19 공식 바이너리를 SHA-256 확인 후 `runs/tools/stockfish/`에 설치한다 (`setup_env.sh`가 부른다) |
+| `build_stockfish.sh` | (로컬) Stockfish 19 공식 릴리스 소스를 정적 링크로 빌드한다. 서버 glibc가 오래되어 공식 바이너리가 돌지 않기 때문이다 |
+| `install_stockfish.sh` | 정적 빌드 파일을 SHA-256·CPU 지원·bench로 확인하고 `runs/tools/stockfish/`에 설치한다 (`setup_env.sh`가 부른다) |
 | `submit_match.sh`, `match.sbatch` | 짝 대국 묶음 여러 개(`src/match/play.py`)를 sbatch 작업 하나로 제출한다 (9절 대국) |
 | `submit_quality.sh`, `quality.sbatch` | C4 Stockfish 기준 수 품질 탐색(`src/match/quality.py`)을 CPU 작업으로 제출한다 (9절 C4) |
 
@@ -56,7 +57,7 @@ mydocs/test_result/에 정리
 | `runs/gpu/dump/` | 모델 출력 덤프: `positions.npz`, `base.npz`, `{모델 ID}.npz`·`.json`·`.txt`, 기록 `meta_{작업ID}.txt`, GPU 로그 |
 | `runs/gpu/match/{이름}/` | 대국: `games.pgn`, `index.jsonl`, `config.json`, `runs.jsonl`. 같은 폴더에 `{이름}.txt`(출력), `meta_{작업ID}.txt`, GPU 로그 |
 | `runs/gpu/quality/` | C4: `best.jsonl`·`moves.jsonl`(탐색 캐시), `{모델 ID}.npz`, `quality.json`, `config.json`, `meta_{작업ID}.txt` |
-| `runs/tools/` | Stockfish 실행 파일 (`install_stockfish.sh`), 오프닝 책 zip (로컬 선별용) |
+| `runs/tools/` | Stockfish 정적 빌드 파일(`stockfish-dist/`)과 설치본(`stockfish/`), 오프닝 책 zip (로컬 선별용) |
 
 ## 2. 저장소 받기
 
@@ -361,13 +362,18 @@ tar -czf runs/gpu/collect/dump_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/dump runs/
 
 평가 기준 문서 5절(주장 C 기력)의 C1(어댑터 대 베이스)·C2(모델 대 Stockfish) 짝 대국을 둔다 (Task #13). 오프닝 200개(`src/match/openings_200.json`)마다 색을 바꿔 2국을 둔다. 수는 π(temperature 0.02)에서 샘플링하고, Stockfish는 Stockfish 19, 1스레드, 노드 수 고정이다.
 
-**Stockfish 설치 확인** (로그인 노드, 한 번):
+**Stockfish 설치** (한 번). 공식 리눅스 바이너리는 glibc 2.35를 요구해 이 서버에서 돌지 않는다. 그래서 로컬에서 같은 버전 소스로 정적 링크 빌드한 파일 하나(`stockfish-19-x86-64-avx2-static`, SHA-256 `1d65ab6d…65784632`)를 로컬과 서버가 함께 쓴다 (Task #13).
 
 ```bash
-bash gpu_train/install_stockfish.sh     # setup_env.sh를 다시 돌려도 된다
+# 로컬 (개발 컨테이너, root): 빌드. 이미 있으면 건너뛴다
+apt-get install -y build-essential && bash gpu_train/build_stockfish.sh
+# 로컬 → 서버로 파일을 같은 경로에 옮긴다
+scp runs/tools/stockfish-dist/stockfish-19-x86-64-avx2-static <서버>:<저장소>/runs/tools/stockfish-dist/
+# 서버 (로그인 노드)
+bash gpu_train/install_stockfish.sh
 ```
 
-출력의 `id name Stockfish 19`, 실행 파일 SHA-256 `0f83d24c…4c12da19`, `bench: Nodes searched : 2497913`을 확인한다. bench 값이 다르면 탐색이 로컬과 다르므로 진행하지 않고 알린다.
+`install_stockfish.sh`는 CPU가 AVX2·BMI1을 지원하는지, 파일 SHA-256이 맞는지 확인하고 설치한다. 출력의 `id name Stockfish 19`와 `bench: 2497913`을 확인한다. bench는 공식 바이너리와 같은 값이다. 다르면 탐색이 로컬과 다르므로 진행하지 않는다. 계산 노드 CPU가 로그인 노드와 다를 수 있으므로, 대국·C4 작업 기록의 bench 줄도 확인한다.
 
 **묶음 표기** `이름:모델:상대:노드수:오프닝` (상대가 `base`이면 노드수는 `-`). 결과는 `runs/gpu/match/{이름}/`에 쌓이고, 끝난 대국은 건너뛰므로 끊기면 같은 명령으로 다시 낸다. 같은 이름에 다른 설정을 주면 거부한다.
 

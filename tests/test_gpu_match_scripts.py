@@ -8,7 +8,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ["gpu_train/match.sbatch", "gpu_train/submit_match.sh", "gpu_train/quality.sbatch",
-           "gpu_train/submit_quality.sh", "gpu_train/install_stockfish.sh", "gpu_train/setup_env.sh"]
+           "gpu_train/submit_quality.sh", "gpu_train/install_stockfish.sh", "gpu_train/build_stockfish.sh",
+           "gpu_train/setup_env.sh"]
 
 
 def run_script(*args, env=None):
@@ -90,3 +91,21 @@ def test_quality_sbatch_rejects_missing_dump(site_env, tmp_path):
     result = run_script("gpu_train/quality.sbatch", "base",
                         env={"SITE_ENV": str(tmp_path / "none.env"), "QUALITY_DUMP": str(tmp_path / "nodump")})
     assert result.returncode == 2 and "positions.npz가 없다" in result.stderr
+
+
+def test_install_stockfish_rejects_wrong_file(tmp_path):
+    """빈 저장소 사본에서: 원본 파일이 없으면 거부, SHA-256이 다르면 거부 (CPU가 AVX2를 지원할 때)."""
+    import shutil
+    (tmp_path / "gpu_train").mkdir()
+    shutil.copy(ROOT / "gpu_train/install_stockfish.sh", tmp_path / "gpu_train")
+    flags = Path("/proc/cpuinfo").read_text() if Path("/proc/cpuinfo").exists() else ""
+    if " avx2" not in flags:
+        pytest.skip("AVX2가 없는 CPU")
+    script = str(tmp_path / "gpu_train/install_stockfish.sh")
+    missing = subprocess.run(["bash", script], capture_output=True, text=True)
+    assert missing.returncode != 0 and "가 없다" in missing.stderr
+    fake = tmp_path / "fake"
+    fake.write_bytes(b"not stockfish")
+    wrong = subprocess.run(["bash", script, str(fake)], capture_output=True, text=True)
+    assert wrong.returncode != 0 and "FAILED" in wrong.stdout + wrong.stderr
+    assert not (tmp_path / "runs/tools/stockfish/stockfish").exists()

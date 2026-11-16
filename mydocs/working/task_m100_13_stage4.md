@@ -74,4 +74,4 @@ tar -czf runs/gpu/collect/match_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/match run
 
 ## 커밋
 
-(승인 뒤 기록)
+`03d3199` Task #13 단계4: 서버 실행 틀

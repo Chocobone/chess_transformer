@@ -117,3 +117,7 @@ tar -czf runs/gpu/collect/quality_$(date +%Y%m%d_%H%M%S).tar.gz runs/gpu/quality
 3. (결정 요청) 동시 대국 OOM 대응 → **권장안 채택 (작업지시자, 2026-11-17)**
    - **권장: 이번에는 소스를 고치지 않는다.** `MATCH_CONCURRENT=24`를 명령에 붙여 돌린다. 재현성 확인으로 동시 대국 수가 기보를 바꾸지 않음을 보였다.
    - 대안: `match.sbatch`의 기본 동시 대국 수를 24로 낮추고 `gpu_train/README.md` 문제 해결 표에 OOM 행을 더한다 (소스 수정, devel 재배포 필요).
+
+## 커밋
+
+`403cc22` Task #13 단계5: 노드 수 300 보정, 기준 문서 정정

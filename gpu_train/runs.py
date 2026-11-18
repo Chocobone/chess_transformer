@@ -1,6 +1,7 @@
-"""학습 정의 R1~R10, seed 0 대조군 R1s0·R2s0·R8s0과 smoke. 학습 ID를 `src.train.train` 명령으로 바꾼다.
+"""학습 정의 R1~R10, seed 0 대조군 R1s0·R2s0·R8s0, smoke, 270M 정의. 학습 ID를 `src.train.train` 명령으로 바꾼다.
 
 설정은 기준 문서 `mydocs/tech/evaluation_criteria.md` 8.1절을 따른다.
+270M 정의(`*_270M`)는 기준 문서 밖의 보조 실험이다 (Task #14). 136M 짝과 베이스·합법수 한도만 다르다.
 작업 스크립트(`train.sbatch`)는 ID만 받고 인자는 모두 여기서 만든다.
 
     python -m gpu_train.runs list
@@ -15,10 +16,14 @@ import sys
 from dataclasses import dataclass
 
 OUT_ROOT = "runs/gpu"
+BASE_136M = "base_model/136M.pt"
+BASE_270M = "base_model/270M.pt"
+# A2000(6 GB)에서 270M 학습의 합법수 한도. 한도는 기울기 누적 단위만 바꾸고 학습 결과는 같다 (학습 가이드 6절)
+MAX_MOVES_270M = 48
 
 # 8.1절의 공통 설정. train.py 기본값이 바뀌어도 학습이 달라지지 않도록 모두 적는다.
 COMMON: tuple[tuple[str, str], ...] = (
-    ("--base", "base_model/136M.pt"),
+    ("--base", BASE_136M),  # Run.base로 바뀐다
     ("--rank", "16"),
     ("--lora-alpha", "32"),
     ("--lr", "1e-4"),
@@ -42,6 +47,8 @@ class Run:
     seed: int = 1
     role: str = ""
     extra: tuple[str, ...] = ()  # COMMON 뒤에 붙는다. 같은 옵션이면 뒤쪽 값이 쓰인다
+    base: str = BASE_136M  # COMMON의 --base 값을 바꾼다
+    max_moves: int | None = None  # --max-moves-per-forward. None이면 train.py 기본값(128)
 
 
 RUNS: dict[str, Run] = {run.run_id: run for run in (
@@ -61,6 +68,12 @@ RUNS: dict[str, Run] = {run.run_id: run for run in (
     Run("R7", "tal", None, lam=0.0, role="α = a₂, λ = 0. 기력 항 ablation"),
     Run("smoke", "tal", 0.0, role="서버 확인용 50 갱신",
         extra=("--max-steps", "50", "--eval-every", "25", "--eval-positions", "500")),
+    # 270M 보조 실험 (Task #14). 짝인 136M 정의와 베이스·합법수 한도만 다르다
+    Run("R1_270M", "tal", 0.0, role="270M, α = 0. R1의 270M 짝", base=BASE_270M, max_moves=MAX_MOVES_270M),
+    Run("R2_270M", "smyslov", 0.0, role="270M, α = 0. R2의 270M 짝", base=BASE_270M, max_moves=MAX_MOVES_270M),
+    Run("R8_270M", "karpov", 0.0, role="270M, α = 0. R8의 270M 짝", base=BASE_270M, max_moves=MAX_MOVES_270M),
+    Run("smoke_270M", "tal", 0.0, role="270M 서버 확인·메모리 실측용 50 갱신", base=BASE_270M,
+        max_moves=MAX_MOVES_270M, extra=("--max-steps", "50", "--eval-every", "25", "--eval-positions", "500")),
 )}
 
 
@@ -81,7 +94,9 @@ def train_args(run_id: str) -> list[str]:
         raise ValueError(f"{run_id}의 α가 아직 없다. 특성 구현 이슈에서 α를 정한 뒤 gpu_train/runs.py에 적는다")
     args = ["python", "-u", "-m", "src.train.train", "--player", run.player, "--out", out_dir(run_id)]
     for option, value in COMMON:
-        args += [option, value]
+        args += [option, run.base if option == "--base" else value]
+    if run.max_moves is not None:
+        args += ["--max-moves-per-forward", str(run.max_moves)]
     args += ["--alpha", repr(run.alpha), "--lam", repr(run.lam), "--seed", str(run.seed), *run.extra, "--resume"]
     return args
 
@@ -96,11 +111,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if ns.command == "list":
-            print(f"{'ID':<6} {'기사':<8} {'α':<6} {'λ':<4} {'seed':<4} {'실행':<4} 역할")
+            print(f"{'ID':<10} {'기사':<8} {'α':<6} {'λ':<4} {'seed':<4} {'실행':<4} {'베이스':<6} 역할")
             for run in RUNS.values():
                 alpha = "미정" if run.alpha is None else f"{run.alpha:g}"
                 ready = "가능" if run.alpha is not None else "불가"
-                print(f"{run.run_id:<6} {run.player:<8} {alpha:<6} {run.lam:<4g} {run.seed:<4} {ready:<4} {run.role}")
+                base = run.base.rsplit("/", 1)[-1].removesuffix(".pt")
+                print(f"{run.run_id:<10} {run.player:<8} {alpha:<6} {run.lam:<4g} {run.seed:<4} {ready:<4} {base:<6} {run.role}")
         elif ns.command == "args":
             print(" ".join(train_args(ns.run_id)))
         else:

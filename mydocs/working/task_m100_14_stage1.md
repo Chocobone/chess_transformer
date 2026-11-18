@@ -73,4 +73,4 @@ python -u -m src.train.train --player tal --out runs/gpu/R1_270M --base base_mod
 
 ## 커밋
 
-(승인 후 기록)
+`d17935f` Task #14 단계1: 270M 학습 정의와 입력 목록 (gpu_train/runs.py, make_manifest.sh)

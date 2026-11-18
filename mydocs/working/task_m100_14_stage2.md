@@ -83,4 +83,4 @@
 
 ## 커밋
 
-(승인 후 기록)
+`f6b428a` Task #14 단계2: q 캐시 작업 도구 (gpu_train/check_cache.py, cache.sbatch, submit_cache.sh)

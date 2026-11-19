@@ -1,5 +1,5 @@
-# 입력 파일 13개. 확인: bash gpu_train/check_inputs.sh
-# 만든 날: 2026-11-04, 커밋: 2812f1e
+# 입력 파일 14개. 확인: bash gpu_train/check_inputs.sh
+# 만든 날: 2026-11-18, 커밋: 4f774ad
 # 545946077 bytes  base_model/136M.pt
 # 16359267 bytes  data/processed/tal/train.jsonl
 # 798624 bytes  data/processed/tal/val.jsonl
@@ -13,6 +13,7 @@
 # 978904 bytes  data/processed/smyslov/val.jsonl
 # 899 bytes  data/processed/smyslov/stats.json
 # 19320174 bytes  data/processed/smyslov/base_q_136M.npz
+# 1082972639 bytes  base_model/270M.pt
 8afa9f268ba0e23f428055a0e5cc852bc87e7a3d1339a24dc415f6f3619a4a19  base_model/136M.pt
 97d0dfd7944ec3d4d80a1a7e40754ad33830c3ea7d38f1ddd271872cea21ae2f  data/processed/tal/train.jsonl
 2ae8f2d17d89703b6c094a153b327632903880aede013a028ef66feeca38a773  data/processed/tal/val.jsonl
@@ -26,3 +27,4 @@ d69fde9934581103d45454f02d0fafb5034526081a66d8fdfc8b59c980bdef32  data/processed
 f1dea94c811cbe165237be331416273ff3131778f67245187f761a6a42701c03  data/processed/smyslov/val.jsonl
 ee98b461af73f6d989af376022c9da5aeb7aa1d64741cec39c94f9a331ef24b9  data/processed/smyslov/stats.json
 b0904be63c28c1f4318e816f99c5ec6f398b1f4aab51915fa8a61e6b1b82f87e  data/processed/smyslov/base_q_136M.npz
+6816911939332476a7637bb6d3abf27901515bcb94f796fa2b509a9c378824a0  base_model/270M.pt

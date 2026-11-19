@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from huggingface_hub import CommitOperationAdd, HfApi, get_token
+from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi, get_token
 
 repo = sys.argv[1]
 if get_token() is None:
@@ -31,7 +31,11 @@ if not api.repo_info(repo, repo_type="model").private:
 manifest = Path("gpu_train/inputs.sha256")
 files = [line.split(maxsplit=1)[1] for line in manifest.read_text().splitlines()
          if line.strip() and not line.startswith("#")]
-operations = [CommitOperationAdd(path_in_repo=path, path_or_fileobj=path) for path in [*files, str(manifest)]]
+# 저장소 안 경로는 항상 '/'로 쓴다 (Windows에서 str(Path)는 '\\'가 되어 다른 파일로 올라간다, Task #14)
+operations = [CommitOperationAdd(path_in_repo=path, path_or_fileobj=path) for path in [*files, manifest.as_posix()]]
+# 예전에 Windows에서 '\\' 경로로 잘못 올라간 파일은 같은 커밋에서 지운다
+operations += [CommitOperationDelete(path_in_repo=path) for path in api.list_repo_files(repo, repo_type="model")
+               if "\\" in path]
 
 head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
 today = datetime.date.today().strftime("%Y%m%d")

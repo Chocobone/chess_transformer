@@ -31,6 +31,6 @@ out=gpu_train/inputs.sha256
   echo "# 입력 파일 ${#files[@]}개. 확인: bash gpu_train/check_inputs.sh"
   echo "# 만든 날: $(date '+%F'), 커밋: $(git rev-parse --short HEAD)"
   for f in "${files[@]}"; do echo "# $(stat -c %s "$f") bytes  $f"; done
-  sha256sum "${files[@]}"
+  sha256sum --text "${files[@]}"   # Git Bash(Windows)도 "해시  경로" 형식으로 쓴다 (기본은 "해시 *경로")
 } > "$out"
 echo "$out: ${#files[@]}개, 합계 $(du -cb "${files[@]}" | tail -1 | cut -f1) bytes"
